@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-02-05T13:43:35.855067",
+  "totals": {
+    "enacted_records": 5297,
+    "executive_records": 5529,
+    "discontinued": 1875,
+    "continued": 1935,
+    "modified": 1487,
+    "discontinued_amount": 142710318383,
+    "continued_amount": 6966727742
+  },
+  "by_agency": {
+    "DEPARTMENT OF HEALTH": {
+      "count": 464,
+      "amount": 120223095411
+    },
+    "DEPARTMENT OF FAMILY ASSISTANCE": {
+      "count": 328,
+      "amount": 7809055984
+    },
+    "EDUCATION DEPARTMENT": {
+      "count": 181,
+      "amount": 7419958000
+    },
+    "DEPARTMENT OF MENTAL HYGIENE": {
+      "count": 121,
+      "amount": 3651365500
+    },
+    "DIVISION OF HOMELAND SECURITY AND EMERGENCY SERVICES": {
+      "count": 31,
+      "amount": 1408310000
+    },
+    "DEPARTMENT OF ECONOMIC DEVELOPMENT": {
+      "count": 25,
+      "amount": 498427000
+    },
+    "MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES": {
+      "count": 11,
+      "amount": 248821000
+    },
+    "OFFICE OF INDIGENT LEGAL SERVICES": {
+      "count": 24,
+      "amount": 215099000
+    },
+    "DIVISION OF HOUSING AND COMMUNITY RENEWAL": {
+      "count": 21,
+      "amount": 212970000
+    },
+    "DEPARTMENT OF PUBLIC SERVICE": {
+      "count": 4,
+      "amount": 205640000
+    },
+    "DIVISION OF CRIMINAL JUSTICE SERVICES": {
+      "count": 139,
+      "amount": 194454988
+    },
+    "DEPARTMENT OF TRANSPORTATION": {
+      "count": 93,
+      "amount": 166212000
+    },
+    "DEPARTMENT OF LABOR": {
+      "count": 63,
+      "amount": 144111000
+    },
+    "DEPARTMENT OF STATE": {
+      "count": 27,
+      "amount": 131836000
+    },
+    "NEW YORK STATE URBAN DEVELOPMENT CORPORATION": {
+      "count": 52,
+      "amount": 59613000
+    },
+    "OFFICE FOR THE AGING": {
+      "count": 66,
+      "amount": 34134500
+    },
+    "DEPARTMENT OF AGRICULTURE AND MARKETS": {
+      "count": 79,
+      "amount": 23609000
+    },
+    "STATE BOARD OF ELECTIONS": {
+      "count": 10,
+      "amount": 15811000
+    },
+    "DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION": {
+      "count": 6,
+      "amount": 13277000
+    },
+    "OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION": {
+      "count": 21,
+      "amount": 6956000
+    }
+  }
+}

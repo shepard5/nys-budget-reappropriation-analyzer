@@ -1,0 +1,18 @@
+{
+  "generated_at": "2026-02-08T14:46:24.600580",
+  "totals": {
+    "enacted_records": 445,
+    "executive_records": 392,
+    "discontinued": 143,
+    "continued": 168,
+    "modified": 134,
+    "discontinued_amount": 9618199500,
+    "continued_amount": 1276119500
+  },
+  "by_agency": {
+    "EDUCATION DEPARTMENT": {
+      "count": 143,
+      "amount": 9618199500
+    }
+  }
+}

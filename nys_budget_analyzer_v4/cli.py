@@ -383,6 +383,94 @@ def report(ctx, data_file, output_format, output, title):
 
 
 # ============================================================
+# CACHE COMMAND - Manage extraction cache
+# ============================================================
+
+@cli.command()
+@click.option('--list', '-l', 'list_cache', is_flag=True, help='List all cached extractions')
+@click.option('--stats', '-s', is_flag=True, help='Show cache statistics')
+@click.option('--clear', '-c', is_flag=True, help='Clear all cached data')
+@click.option('--clear-file', type=click.Path(), help='Clear cache for specific file')
+@click.option('--info', '-i', type=click.Path(), help='Show cache info for specific file')
+@click.pass_context
+def cache(ctx, list_cache, stats, clear, clear_file, info):
+    """
+    Manage the extraction cache.
+
+    The cache stores PDF extraction results to avoid re-parsing unchanged files.
+    Cache location: ~/.nys_budget_cache/
+
+    Examples:
+        nys-budget cache --stats         # Show cache statistics
+        nys-budget cache --list          # List all cached files
+        nys-budget cache --info file.pdf # Check if file is cached
+        nys-budget cache --clear         # Clear all cache
+        nys-budget cache --clear-file file.pdf  # Clear specific file
+    """
+    from .storage import get_cache
+
+    extraction_cache = get_cache()
+
+    if stats:
+        cache_stats = extraction_cache.get_stats()
+        click.echo("=== Cache Statistics ===")
+        click.echo(f"Cache directory: {cache_stats['cache_dir']}")
+        click.echo(f"Cached files: {cache_stats['cached_files']}")
+        click.echo(f"Total records: {cache_stats['total_records']:,}")
+        click.echo(f"Cache size: {cache_stats['cache_size_mb']} MB")
+        click.echo(f"Cache version: {cache_stats['version']}")
+
+    elif list_cache:
+        cached = extraction_cache.list_cached()
+        if not cached:
+            click.echo("No cached extractions found")
+            return
+
+        click.echo(f"=== Cached Extractions ({len(cached)} files) ===")
+        for entry in cached:
+            click.echo(f"\n  File: {entry['file_name']}")
+            click.echo(f"  Path: {entry['file_path']}")
+            click.echo(f"  Records: {entry['record_count']:,}")
+            click.echo(f"  Extracted: {entry['extraction_time']}")
+
+    elif clear:
+        if click.confirm('Are you sure you want to clear the entire cache?'):
+            extraction_cache.clear_cache()
+            click.echo("Cache cleared successfully")
+        else:
+            click.echo("Cache clear cancelled")
+
+    elif clear_file:
+        if extraction_cache.is_cached(clear_file):
+            extraction_cache.clear_cache(clear_file)
+            click.echo(f"Cache cleared for: {clear_file}")
+        else:
+            click.echo(f"File not in cache: {clear_file}")
+
+    elif info:
+        cache_info = extraction_cache.get_cache_info(info)
+        if cache_info:
+            click.echo("=== Cache Info ===")
+            click.echo(f"File: {cache_info['file_name']}")
+            click.echo(f"Hash: {cache_info['file_hash'][:16]}...")
+            click.echo(f"Records: {cache_info['record_count']:,}")
+            click.echo(f"Extracted: {cache_info['extraction_time']}")
+            click.echo(f"File size: {cache_info['file_size']:,} bytes")
+        else:
+            click.echo(f"File not in cache: {info}")
+            if extraction_cache.is_cached(info):
+                click.echo("(Hash computed, but no metadata found)")
+
+    else:
+        # Default: show stats
+        cache_stats = extraction_cache.get_stats()
+        click.echo("=== Cache Summary ===")
+        click.echo(f"Cached files: {cache_stats['cached_files']}")
+        click.echo(f"Cache size: {cache_stats['cache_size_mb']} MB")
+        click.echo("\nUse --help for available options")
+
+
+# ============================================================
 # HELPER FUNCTIONS
 # ============================================================
 

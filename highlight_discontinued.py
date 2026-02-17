@@ -207,9 +207,9 @@ Examples:
     highlights = highlight_pdf(args.enacted_pdf, patterns, args.output_pdf, args.type)
 
     if highlights > 0:
-        print(f"\n✅ Done! Open {args.output_pdf} to see highlighted discontinued items.")
+        print(f"\nDone! Open {args.output_pdf} to see highlighted discontinued items.")
     else:
-        print("\n⚠️  No highlights were made. Check if patterns match PDF content.")
+        print("\nNo highlights were made. Check if patterns match PDF content.")
 
 
 if __name__ == "__main__":

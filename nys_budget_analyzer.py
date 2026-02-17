@@ -86,6 +86,47 @@ class BudgetRecord:
 
 
 @dataclass
+class BudgetaryAccountRecord:
+    """A budgetary account line item (sub-account within an appropriation).
+
+    In State Operations PDFs, each appropriation has child line items with
+    budgetary account codes like Personal Service (50100), Travel (54000), etc.
+    These are NOT appropriation IDs — they are expenditure category codes.
+    """
+    # Parent appropriation link
+    parent_appropriation_id: str  # The real approp ID (e.g., "81001")
+
+    # Sub-account identification
+    account_code: str  # The budgetary code (e.g., "50100")
+    account_description: str  # "Personal service--regular", "Travel", etc.
+
+    # Amount
+    amount: int  # Dollar amount for this line item
+    reappropriation_amount: int  # Reapprop amount if in reapprop section
+
+    # Context (inherited from parent/page)
+    agency: str
+    budget_type: str
+    fund_type: str
+    account: str  # Fund account (e.g., "State Purposes Account - 10050")
+    fiscal_year: str
+    chapter_year: str
+
+    # Source
+    page_number: int
+    line_number: Optional[int]
+    raw_line: str
+    source_file: str
+    source_budget: str  # "enacted" or "executive"
+    record_type: str  # "appropriation" or "reappropriation"
+
+    def composite_key(self) -> str:
+        """Unique key: agency|parent_approp_id|account_code|chapter_year|amount"""
+        agency_norm = re.sub(r'\s+', ' ', self.agency.upper().strip()) if self.agency else ""
+        return f"{agency_norm}|{self.parent_appropriation_id}|{self.account_code}|{self.chapter_year}|{self.amount}"
+
+
+@dataclass
 class ParsingContext:
     """Tracks parsing state across pages."""
     agency: str = "Unknown"
@@ -97,6 +138,10 @@ class ParsingContext:
     chapter_number: str = ""
     section_number: str = ""
     is_reappropriation_section: bool = False
+    # Cross-page buffer persistence for records that span page boundaries
+    pending_text_buffer: List[str] = field(default_factory=list)
+    pending_start_line_num: Optional[int] = None
+    pending_parent_approp_id: str = ""
 
 
 @dataclass
@@ -116,6 +161,15 @@ class ComparisonResults:
     modified: List[ComparisonResult] = field(default_factory=list)
     all_enacted: List[BudgetRecord] = field(default_factory=list)
     all_executive: List[BudgetRecord] = field(default_factory=list)
+
+
+@dataclass
+class BudgetaryComparisonResults:
+    """Results of comparing budgetary sub-accounts between enacted and executive."""
+    discontinued: List[BudgetaryAccountRecord] = field(default_factory=list)
+    continued: List[BudgetaryAccountRecord] = field(default_factory=list)
+    all_enacted: List[BudgetaryAccountRecord] = field(default_factory=list)
+    all_executive: List[BudgetaryAccountRecord] = field(default_factory=list)
 
 
 # =============================================================================
@@ -195,6 +249,44 @@ class BudgetPatterns:
             r'\((\d{5})\)\s*\.{3,}\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)(?!\s*\.{3,}\s*\(re\.)'
         )
 
+        # Known budgetary account code prefixes (State Operations sub-accounts)
+        # These are NOT appropriation IDs; they are expenditure category codes:
+        #   50xxx = Personal Service, 51xxx = Contractual Services,
+        #   54xxx = Travel, 56xxx = Equipment, 57xxx = Supplies/Nonpersonal Service,
+        #   58xxx = Indirect Costs, 60xxx = Fringe Benefits
+        self.BUDGETARY_ACCOUNT_PREFIXES = {'50', '51', '54', '56', '57', '58', '60'}
+
+        # Pattern matching a budgetary line item: "description (XXXXX) ... amount"
+        self.BUDGETARY_LINE = re.compile(
+            r'([\w\s\-/]+?)\s*\((\d{5})\)\s*\.{2,}\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)'
+        )
+
+        # Keyword-based detection of budgetary sub-lines.
+        # Catches sub-lines that inherited a real parent approp ID from buffer context.
+        # Matches: "Personal service--regular (50100)", "Travel (54000)", etc.
+        self.BUDGETARY_SUB_LINE_KEYWORDS = re.compile(
+            r'(?:Personal service|Temporary service|Holiday[/]?overtime|'
+            r'Contractual services?|Travel|Equipment|'
+            r'Supplies and materials|Nonpersonal service|'
+            r'Indirect costs?|Fringe benefits?)'
+            r'\s*(?:--\w+\s*)?\(\d{5}\)',
+            re.IGNORECASE
+        )
+
+    def is_budgetary_account_code(self, code: str) -> bool:
+        """Return True if the 5-digit code is a budgetary account code, not an approp ID."""
+        if not code or len(code) != 5:
+            return False
+        return code[:2] in self.BUDGETARY_ACCOUNT_PREFIXES
+
+    def is_budgetary_sub_line(self, text: str) -> bool:
+        """Return True if text contains a budgetary sub-line pattern.
+
+        Catches sub-lines even when they've inherited a real parent approp ID.
+        Matches patterns like 'Personal service--regular (50100) ... 9,900,000'
+        """
+        return bool(self.BUDGETARY_SUB_LINE_KEYWORDS.search(text))
+
 
 # =============================================================================
 # PDF EXTRACTION
@@ -206,7 +298,7 @@ class PDFExtractor:
     def __init__(self):
         self.patterns = BudgetPatterns()
 
-    def extract_records(self, pdf_path: Path, source_budget: str) -> List[BudgetRecord]:
+    def extract_records(self, pdf_path: Path, source_budget: str) -> Tuple[List[BudgetRecord], List[BudgetaryAccountRecord]]:
         """
         Extract all budget records from a PDF.
 
@@ -215,9 +307,10 @@ class PDFExtractor:
             source_budget: "enacted" or "executive"
 
         Returns:
-            List of BudgetRecord objects
+            Tuple of (BudgetRecord list, BudgetaryAccountRecord list)
         """
         records = []
+        budgetary_records = []
         context = ParsingContext()
         seen_keys: Set[str] = set()  # For deduplication
 
@@ -236,7 +329,7 @@ class PDFExtractor:
                 context = self._update_context_from_page(text, context)
 
                 # Extract records from this page
-                page_records = self._extract_page_records(
+                page_records, page_budgetary = self._extract_page_records(
                     text, context, page_num, pdf_path.name, source_budget
                 )
 
@@ -247,12 +340,17 @@ class PDFExtractor:
                         seen_keys.add(key)
                         records.append(record)
 
+                # Collect budgetary records
+                budgetary_records.extend(page_budgetary)
+
                 # Progress indicator
                 if page_num % 100 == 0:
                     print(f"    Progress: {page_num}/{total_pages} pages ({page_num/total_pages*100:.1f}%)")
 
         print(f"  Extracted {len(records)} unique records")
-        return records
+        if budgetary_records:
+            print(f"  Extracted {len(budgetary_records)} budgetary sub-account records")
+        return records, budgetary_records
 
     def _update_context_from_page(self, page_text: str, context: ParsingContext) -> ParsingContext:
         """Update parsing context based on page content."""
@@ -296,22 +394,25 @@ class PDFExtractor:
         page_num: int,
         source_file: str,
         source_budget: str
-    ) -> List[BudgetRecord]:
+    ) -> Tuple[List[BudgetRecord], List[BudgetaryAccountRecord]]:
         """Extract budget records from a single page."""
         records = []
+        budgetary_records = []
 
         # Split page into chapter-based chunks for reappropriations
         if context.is_reappropriation_section:
             records.extend(self._extract_reappropriation_records(
-                page_text, context, page_num, source_file, source_budget
+                page_text, context, page_num, source_file, source_budget,
+                budgetary_records
             ))
         else:
             # Extract appropriations
             records.extend(self._extract_appropriation_records(
-                page_text, context, page_num, source_file, source_budget
+                page_text, context, page_num, source_file, source_budget,
+                budgetary_records
             ))
 
-        return records
+        return records, budgetary_records
 
     def _extract_reappropriation_records(
         self,
@@ -319,18 +420,35 @@ class PDFExtractor:
         context: ParsingContext,
         page_num: int,
         source_file: str,
-        source_budget: str
+        source_budget: str,
+        budgetary_records: List[BudgetaryAccountRecord] = None
     ) -> List[BudgetRecord]:
-        """Extract reappropriation records from page text."""
+        """Extract reappropriation records from page text.
+
+        For State Operations, tracks parent appropriation IDs across buffer resets
+        so that budgetary account codes are properly linked to their parent.
+        """
         records = []
+        if budgetary_records is None:
+            budgetary_records = []
         lines = page_text.splitlines()
+        is_state_ops = context.budget_type == "STATE OPERATIONS"
 
         # Track current chapter context and text buffer
         current_chapter_year = context.chapter_year
         current_chapter_num = context.chapter_number
         current_section_num = context.section_number
-        text_buffer = []
-        start_line_num = None
+
+        # Restore any pending buffer from the previous page (cross-page records)
+        text_buffer = list(context.pending_text_buffer)
+        start_line_num = context.pending_start_line_num
+        # Clear the pending buffer so it doesn't carry over again
+        context.pending_text_buffer = []
+        context.pending_start_line_num = None
+
+        # Track parent appropriation ID across buffer resets (key fix for State Ops)
+        # Restore from context if carrying over from previous page
+        current_parent_approp_id = context.pending_parent_approp_id or None
 
         for line in lines:
             original_line = line
@@ -358,28 +476,122 @@ class PDFExtractor:
                         page_num, start_line_num, source_file, source_budget
                     )
                     if record:
+                        if is_state_ops and not self.patterns.is_budgetary_account_code(record.appropriation_id):
+                            current_parent_approp_id = record.appropriation_id
                         records.append(record)
 
                 # Start new buffer
                 text_buffer = [original_line]
                 start_line_num = line_num
+
+                # Extract real approp ID from chapter citation line
+                if is_state_ops:
+                    all_ids = self.patterns.APPROP_ID.findall(line_stripped)
+                    for found_id in all_ids:
+                        if not self.patterns.is_budgetary_account_code(found_id):
+                            current_parent_approp_id = found_id
                 continue
+
+            # Scan non-chapter lines for real approp IDs (updates parent tracker)
+            if is_state_ops:
+                all_ids = self.patterns.APPROP_ID.findall(line_stripped)
+                for found_id in all_ids:
+                    if not self.patterns.is_budgetary_account_code(found_id):
+                        current_parent_approp_id = found_id
 
             # Check for reappropriation marker
             reapprop_match = self.patterns.REAPPROP_MARKER.search(line_stripped)
             if reapprop_match:
                 text_buffer.append(original_line)
 
-                # Create record from buffer
-                record = self._create_reapprop_record_from_buffer(
-                    text_buffer, context, current_chapter_year,
-                    current_chapter_num, current_section_num,
-                    page_num, start_line_num, source_file, source_budget
-                )
-                if record:
-                    records.append(record)
+                # Check if this is a budgetary sub-account reappropriation
+                buffer_text = '\n'.join(text_buffer)
+                found_id = self._find_approp_id(buffer_text)
 
-                # Reset buffer (but keep chapter context)
+                if (is_state_ops and found_id
+                        and self.patterns.is_budgetary_account_code(found_id)):
+                    # Route to budgetary records
+                    reapprop_amount = self._parse_amount(reapprop_match.group(1))
+                    full_match = self.patterns.REAPPROP_FULL.search(buffer_text)
+                    orig_amount = self._parse_amount(full_match.group(1)) if full_match else reapprop_amount
+
+                    desc_match = self.patterns.BUDGETARY_LINE.search(buffer_text)
+                    description = desc_match.group(1).strip() if desc_match else ""
+
+                    budgetary_records.append(BudgetaryAccountRecord(
+                        parent_appropriation_id=current_parent_approp_id,
+                        account_code=found_id,
+                        account_description=description,
+                        amount=orig_amount,
+                        reappropriation_amount=reapprop_amount,
+                        agency=context.agency,
+                        budget_type=context.budget_type,
+                        fund_type=context.fund_type,
+                        account=context.account,
+                        fiscal_year=context.fiscal_year,
+                        chapter_year=current_chapter_year,
+                        page_number=page_num,
+                        line_number=start_line_num,
+                        raw_line=line_stripped,
+                        source_file=source_file,
+                        source_budget=source_budget,
+                        record_type='reappropriation',
+                    ))
+                else:
+                    # Check if buffer text is actually a budgetary sub-line
+                    # that inherited a real parent ID from the chapter citation.
+                    # BUT: only if the found_id is NOT the real approp ID —
+                    # if _find_approp_id returned a non-budgetary code, the
+                    # buffer contains a real appropriation that just happens
+                    # to mention a budgetary category (e.g., "Equipment (56000)")
+                    if (is_state_ops
+                            and (not found_id or self.patterns.is_budgetary_account_code(found_id))
+                            and self.patterns.is_budgetary_sub_line(buffer_text)):
+                        # This is a sub-line masquerading with a real ID — route to budgetary
+                        reapprop_amount = self._parse_amount(reapprop_match.group(1))
+                        full_match = self.patterns.REAPPROP_FULL.search(buffer_text)
+                        orig_amount = self._parse_amount(full_match.group(1)) if full_match else reapprop_amount
+
+                        # Extract the actual budgetary code from the text
+                        budgetary_code_match = re.search(r'\((\d{5})\)', buffer_text)
+                        budgetary_codes = self.patterns.APPROP_ID.findall(buffer_text)
+                        actual_code = next((c for c in budgetary_codes if self.patterns.is_budgetary_account_code(c)), "Unknown")
+
+                        desc_match = self.patterns.BUDGETARY_LINE.search(buffer_text)
+                        description = desc_match.group(1).strip() if desc_match else ""
+
+                        budgetary_records.append(BudgetaryAccountRecord(
+                            parent_appropriation_id=current_parent_approp_id or found_id or "Unknown",
+                            account_code=actual_code,
+                            account_description=description,
+                            amount=orig_amount,
+                            reappropriation_amount=reapprop_amount,
+                            agency=context.agency,
+                            budget_type=context.budget_type,
+                            fund_type=context.fund_type,
+                            account=context.account,
+                            fiscal_year=context.fiscal_year,
+                            chapter_year=current_chapter_year,
+                            page_number=page_num,
+                            line_number=start_line_num,
+                            raw_line=line_stripped,
+                            source_file=source_file,
+                            source_budget=source_budget,
+                            record_type='reappropriation',
+                        ))
+                    else:
+                        # Genuinely a real appropriation
+                        record = self._create_reapprop_record_from_buffer(
+                            text_buffer, context, current_chapter_year,
+                            current_chapter_num, current_section_num,
+                            page_num, start_line_num, source_file, source_budget
+                        )
+                        if record:
+                            if is_state_ops and not self.patterns.is_budgetary_account_code(record.appropriation_id):
+                                current_parent_approp_id = record.appropriation_id
+                            records.append(record)
+
+                # Reset buffer (but keep chapter context and parent tracker)
                 text_buffer = []
                 start_line_num = None
             else:
@@ -392,6 +604,17 @@ class PDFExtractor:
         context.chapter_year = current_chapter_year
         context.chapter_number = current_chapter_num
         context.section_number = current_section_num
+
+        # Persist any unprocessed buffer for the next page (cross-page records)
+        if text_buffer:
+            context.pending_text_buffer = text_buffer
+            context.pending_start_line_num = start_line_num
+        else:
+            context.pending_text_buffer = []
+            context.pending_start_line_num = None
+
+        # Persist parent approp ID for cross-page continuity
+        context.pending_parent_approp_id = current_parent_approp_id or ""
 
         return records
 
@@ -477,13 +700,24 @@ class PDFExtractor:
         context: ParsingContext,
         page_num: int,
         source_file: str,
-        source_budget: str
+        source_budget: str,
+        budgetary_records: List[BudgetaryAccountRecord] = None
     ) -> List[BudgetRecord]:
-        """Extract appropriation (non-reappropriation) records."""
+        """Extract appropriation (non-reappropriation) records.
+
+        For State Operations, budgetary account codes (50xxx, 51xxx, etc.) are
+        routed to budgetary_records instead of being treated as appropriation IDs.
+        """
         records = []
+        if budgetary_records is None:
+            budgetary_records = []
         lines = page_text.splitlines()
         text_buffer = []
         start_line_num = None
+        is_state_ops = context.budget_type == "STATE OPERATIONS"
+
+        # Track parent appropriation ID for budgetary sub-accounts
+        current_parent_approp_id = None
 
         for line in lines:
             original_line = line
@@ -496,39 +730,107 @@ class PDFExtractor:
                 line_num = int(line_match.group(1))
                 line_stripped = line_match.group(2)
 
+            # Scan for real approp IDs in any line (updates parent tracker)
+            if is_state_ops:
+                all_ids = self.patterns.APPROP_ID.findall(line_stripped)
+                for found_id in all_ids:
+                    if not self.patterns.is_budgetary_account_code(found_id):
+                        current_parent_approp_id = found_id
+
             # Check for appropriation pattern: (XXXXX) ... amount
             approp_match = self.patterns.NEW_APPROP.search(line_stripped)
             if approp_match:
                 approp_id = approp_match.group(1)
                 amount = self._parse_amount(approp_match.group(2))
 
-                # Check for account in buffer or line
-                account = context.account
-                account_match = self.patterns.ACCOUNT.search(line_stripped)
-                if account_match:
-                    account = account_match.group(1)
+                if is_state_ops and self.patterns.is_budgetary_account_code(approp_id):
+                    # This is a budgetary sub-account line, NOT a real appropriation
+                    desc_match = self.patterns.BUDGETARY_LINE.search(line_stripped)
+                    description = desc_match.group(1).strip() if desc_match else ""
 
-                record = BudgetRecord(
-                    agency=context.agency,
-                    appropriation_id=approp_id,
-                    chapter_year=context.fiscal_year[:4] if context.fiscal_year != "Unknown" else "Unknown",
-                    appropriation_amount=amount,
-                    reappropriation_amount=0,
-                    record_type='appropriation',
-                    budget_type=context.budget_type,
-                    fund_type=context.fund_type,
-                    account=account,
-                    fiscal_year=context.fiscal_year,
-                    page_number=page_num,
-                    line_number=line_num,
-                    bill_language=' '.join(text_buffer + [original_line]).strip(),
-                    raw_line=line_stripped,
-                    source_file=source_file,
-                    source_budget=source_budget
-                )
-                records.append(record)
-                text_buffer = []
-                start_line_num = None
+                    budgetary_records.append(BudgetaryAccountRecord(
+                        parent_appropriation_id=current_parent_approp_id or "Unknown",
+                        account_code=approp_id,
+                        account_description=description,
+                        amount=amount,
+                        reappropriation_amount=0,
+                        agency=context.agency,
+                        budget_type=context.budget_type,
+                        fund_type=context.fund_type,
+                        account=context.account,
+                        fiscal_year=context.fiscal_year,
+                        chapter_year=context.fiscal_year[:4] if context.fiscal_year != "Unknown" else "Unknown",
+                        page_number=page_num,
+                        line_number=line_num,
+                        raw_line=line_stripped,
+                        source_file=source_file,
+                        source_budget=source_budget,
+                        record_type='appropriation',
+                    ))
+                    text_buffer = []
+                    start_line_num = None
+                elif is_state_ops and self.patterns.is_budgetary_sub_line(line_stripped):
+                    # Sub-line with a non-budgetary code on the same line (e.g., parent ID
+                    # appeared earlier on the line). Route to budgetary records.
+                    budgetary_codes = self.patterns.APPROP_ID.findall(line_stripped)
+                    actual_code = next((c for c in budgetary_codes if self.patterns.is_budgetary_account_code(c)), "Unknown")
+
+                    desc_match = self.patterns.BUDGETARY_LINE.search(line_stripped)
+                    description = desc_match.group(1).strip() if desc_match else ""
+
+                    budgetary_records.append(BudgetaryAccountRecord(
+                        parent_appropriation_id=current_parent_approp_id or approp_id,
+                        account_code=actual_code,
+                        account_description=description,
+                        amount=amount,
+                        reappropriation_amount=0,
+                        agency=context.agency,
+                        budget_type=context.budget_type,
+                        fund_type=context.fund_type,
+                        account=context.account,
+                        fiscal_year=context.fiscal_year,
+                        chapter_year=context.fiscal_year[:4] if context.fiscal_year != "Unknown" else "Unknown",
+                        page_number=page_num,
+                        line_number=line_num,
+                        raw_line=line_stripped,
+                        source_file=source_file,
+                        source_budget=source_budget,
+                        record_type='appropriation',
+                    ))
+                    text_buffer = []
+                    start_line_num = None
+                else:
+                    # Real appropriation
+                    if is_state_ops:
+                        current_parent_approp_id = approp_id
+
+                    # Check for account in buffer or line
+                    account = context.account
+                    account_match = self.patterns.ACCOUNT.search(line_stripped)
+                    if account_match:
+                        account = account_match.group(1)
+
+                    record = BudgetRecord(
+                        agency=context.agency,
+                        appropriation_id=approp_id,
+                        chapter_year=context.fiscal_year[:4] if context.fiscal_year != "Unknown" else "Unknown",
+                        appropriation_amount=amount,
+                        reappropriation_amount=0,
+                        record_type='appropriation',
+                        budget_type=context.budget_type,
+                        fund_type=context.fund_type,
+                        account=account,
+                        fiscal_year=context.fiscal_year,
+                        page_number=page_num,
+                        line_number=line_num,
+                        bill_language=' '.join(text_buffer + [original_line]).strip(),
+                        raw_line=line_stripped,
+                        source_file=source_file,
+                        source_budget=source_budget
+                    )
+                    records.append(record)
+                    text_buffer = []
+                    start_line_num = None
             else:
                 text_buffer.append(original_line)
                 if start_line_num is None and line_num:
@@ -537,11 +839,17 @@ class PDFExtractor:
         return records
 
     def _find_approp_id(self, text: str) -> Optional[str]:
-        """Find appropriation ID in text, handling various formats."""
-        # Try standard format first
-        match = self.patterns.APPROP_ID.search(text)
-        if match:
-            return match.group(1)
+        """Find appropriation ID in text, preferring real IDs over budgetary codes."""
+        # Collect all 5-digit IDs in parentheses
+        all_matches = self.patterns.APPROP_ID.findall(text)
+
+        if all_matches:
+            # Prefer non-budgetary IDs
+            real_ids = [m for m in all_matches if not self.patterns.is_budgetary_account_code(m)]
+            if real_ids:
+                return real_ids[0]
+            # Fall back to first match (might be budgetary - caller decides)
+            return all_matches[0]
 
         # Try underlined format: (_3_0_0_1_2_)
         underline_match = self.patterns.APPROP_ID_UNDERLINE.search(text)
@@ -650,28 +958,41 @@ class BudgetComparator:
 
         Items from enacted budget should appear as reappropriations in executive.
         Missing items = discontinued spending authority.
+
+        Uses two-pass matching:
+        - Pass 1: Exact composite_key match (agency|approp_id|chapter_year|amount)
+        - Pass 2: Relaxed match dropping chapter_year (catches appropriation records
+          where chapter_year defaults to fiscal year prefix, which differs between budgets)
         """
         results = ComparisonResults()
         results.all_enacted = enacted_records
         results.all_executive = executive_records
 
-        # Build lookup of executive reappropriations
-        exec_reapprops: Dict[str, BudgetRecord] = {}
+        # Pass 1: Build lookup from ALL executive records (not just reappropriations)
+        exec_by_key: Dict[str, BudgetRecord] = {}
         for record in executive_records:
-            if record.record_type == 'reappropriation':
-                key = record.composite_key()
-                exec_reapprops[key] = record
+            key = record.composite_key()
+            exec_by_key[key] = record
 
-        print(f"  Executive reappropriations: {len(exec_reapprops)}")
+        # Pass 2: Build relaxed lookup (no chapter_year) for fallback matching
+        # Key: agency|appropriation_id|appropriation_amount
+        exec_by_relaxed: Dict[str, BudgetRecord] = {}
+        for record in executive_records:
+            relaxed = f"{record._normalize(record.agency)}|{record.appropriation_id}|{record.appropriation_amount}"
+            exec_by_relaxed[relaxed] = record
+
+        print(f"  Executive records: {len(exec_by_key)} (exact keys), {len(exec_by_relaxed)} (relaxed keys)")
 
         # Compare each enacted record against executive
         for enacted in enacted_records:
             key = enacted.composite_key()
+            relaxed = f"{enacted._normalize(enacted.agency)}|{enacted.appropriation_id}|{enacted.appropriation_amount}"
 
-            if key in exec_reapprops:
-                exec_record = exec_reapprops[key]
+            # Try exact match first, then relaxed match
+            exec_record = exec_by_key.get(key) or exec_by_relaxed.get(relaxed)
 
-                # Check if amounts match
+            if exec_record:
+                # Check if reappropriation amounts match
                 if enacted.reappropriation_amount == exec_record.reappropriation_amount:
                     results.continued.append(ComparisonResult(
                         enacted_record=enacted,
@@ -690,6 +1011,30 @@ class BudgetComparator:
                     enacted_record=enacted,
                     status='discontinued'
                 ))
+
+        return results
+
+    def compare_budgetary(
+        self,
+        enacted_budgetary: List[BudgetaryAccountRecord],
+        executive_budgetary: List[BudgetaryAccountRecord]
+    ) -> BudgetaryComparisonResults:
+        """Compare budgetary sub-accounts between enacted and executive."""
+        results = BudgetaryComparisonResults()
+        results.all_enacted = enacted_budgetary
+        results.all_executive = executive_budgetary
+
+        # Build lookup of executive budgetary records
+        exec_lookup: Set[str] = set()
+        for record in executive_budgetary:
+            exec_lookup.add(record.composite_key())
+
+        for enacted in enacted_budgetary:
+            key = enacted.composite_key()
+            if key in exec_lookup:
+                results.continued.append(enacted)
+            else:
+                results.discontinued.append(enacted)
 
         return results
 
@@ -924,6 +1269,52 @@ class ReportGenerator:
 
         return path
 
+    def generate_budgetary_reports(self, budgetary_results: BudgetaryComparisonResults) -> Dict[str, Path]:
+        """Generate reports for budgetary sub-account level analysis."""
+        outputs = {}
+
+        outputs['budgetary_discrepancies'] = self._write_budgetary_csv(
+            budgetary_results.discontinued, 'budgetary_account_discrepancies.csv'
+        )
+        outputs['enacted_budgetary'] = self._write_budgetary_csv(
+            budgetary_results.all_enacted, 'enacted_budgetary_details.csv'
+        )
+        outputs['executive_budgetary'] = self._write_budgetary_csv(
+            budgetary_results.all_executive, 'executive_budgetary_details.csv'
+        )
+
+        return outputs
+
+    def _write_budgetary_csv(self, records: List[BudgetaryAccountRecord], filename: str) -> Path:
+        """Write budgetary account records to CSV."""
+        path = self.output_dir / filename
+
+        rows = []
+        for r in records:
+            rows.append({
+                'agency': r.agency,
+                'budget_type': r.budget_type,
+                'fund_type': r.fund_type,
+                'account': r.account,
+                'parent_appropriation_id': r.parent_appropriation_id,
+                'account_code': r.account_code,
+                'account_description': r.account_description,
+                'amount': r.amount,
+                'reappropriation_amount': r.reappropriation_amount,
+                'chapter_year': r.chapter_year,
+                'fiscal_year': r.fiscal_year,
+                'record_type': r.record_type,
+                'page_number': r.page_number,
+                'line_number': r.line_number,
+                'raw_line': r.raw_line,
+                'source_file': r.source_file,
+                'composite_key': r.composite_key(),
+            })
+
+        df = pd.DataFrame(rows)
+        df.to_csv(path, index=False)
+        return path
+
 
 # =============================================================================
 # MAIN ANALYZER
@@ -959,12 +1350,12 @@ class NYSBudgetAnalyzer:
         print("=" * 70)
 
         # Step 1: Extract enacted budget
-        print("\n[1/5] Extracting enacted budget...")
-        enacted_records = self.extractor.extract_records(enacted_pdf, "enacted")
+        print("\n[1/6] Extracting enacted budget...")
+        enacted_records, enacted_budgetary = self.extractor.extract_records(enacted_pdf, "enacted")
 
         # Step 2: Extract executive budget
-        print("\n[2/5] Extracting executive budget...")
-        executive_records = self.extractor.extract_records(executive_pdf, "executive")
+        print("\n[2/6] Extracting executive budget...")
+        executive_records, executive_budgetary = self.extractor.extract_records(executive_pdf, "executive")
 
         # Step 3: Deduplicate
         print("\n[3/5] Deduplicating records...")
@@ -972,6 +1363,8 @@ class NYSBudgetAnalyzer:
         executive_deduped = self.deduplicator.deduplicate(executive_records)
         print(f"  Enacted: {len(enacted_records)} -> {len(enacted_deduped)} unique")
         print(f"  Executive: {len(executive_records)} -> {len(executive_deduped)} unique")
+        if enacted_budgetary or executive_budgetary:
+            print(f"  (Filtered {len(enacted_budgetary)} enacted / {len(executive_budgetary)} executive budgetary sub-lines)")
 
         # Step 4: Compare budgets
         print("\n[4/5] Comparing budgets...")
@@ -993,7 +1386,7 @@ class NYSBudgetAnalyzer:
 
         discontinued_total = sum(r.enacted_record.reappropriation_amount
                                   for r in results.discontinued)
-        print(f"\nTotal discontinued spending authority: ${discontinued_total:,.0f}")
+        print(f"\nDiscontinued spending authority: ${discontinued_total:,.0f}")
         print(f"Affecting {len(set(r.enacted_record.agency for r in results.discontinued))} agencies")
 
         return results

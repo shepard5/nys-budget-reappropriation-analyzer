@@ -35,9 +35,27 @@ env/
 .DS_Store
 Thumbs.db
 
-# PDF files (too large for git - keep locally)
+# PDF files (too large for git)
 *.pdf
 
 # Temporary files
 *.tmp
 *.log
+
+# Generated output directories (analysis artifacts)
+**/output_*/
+full_test_output/
+test_output/
+
+# Claude Code local settings
+.claude/
+
+# Data archives and old analysis directories
+*.zip
+2024-25/
+2025-26 Education Reapprops/
+
+# Old script versions and stale docs
+nys_budget_analyzer_v1_reapprops_only.py
+nys_budget_analyzer_v4/
+VALIDATION_REPORT.md

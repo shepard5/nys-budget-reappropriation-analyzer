@@ -42,8 +42,11 @@ Thumbs.db
 *.tmp
 *.log
 
-# Generated output directories (analysis artifacts)
+# Generated output directories (analysis artifacts — except v5 production output)
 **/output_*/
+!**/output_stateops_v5/
+!**/output_atl_v5/
+!**/output_capital_v5/
 full_test_output/
 test_output/
 

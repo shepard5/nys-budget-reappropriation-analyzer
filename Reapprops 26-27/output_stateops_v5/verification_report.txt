@@ -1,0 +1,120 @@
+================================================================================
+NYS BUDGET REAPPROPRIATION ANALYSIS - VERIFICATION REPORT
+Generated: 2026-02-17 15:31:47
+================================================================================
+
+EXTRACTION SUMMARY
+----------------------------------------
+Enacted Records Extracted: 1,244
+Executive Records Extracted: 1,261
+
+COMPARISON RESULTS
+----------------------------------------
+Discontinued (Missing in Executive): 193
+Continued (Present in Both): 496
+Modified (Amount Changed): 555
+
+FINANCIAL SUMMARY
+----------------------------------------
+Total Discontinued Amount: $1,146,857,500
+Total Continued Amount: $8,262,073,500
+
+TOP 10 LARGEST DISCONTINUED ITEMS
+----------------------------------------
+1. DEPARTMENT OF LABOR
+   ID: 34218 | Year: 2021
+   Amount: $447,750,000
+   Page: 580, Line: 37
+
+2. DEPARTMENT OF HEALTH
+   ID: 29539 | Year: 2023
+   Amount: $181,072,000
+   Page: 475, Line: 46
+
+3. DEPARTMENT OF HEALTH
+   ID: 29540 | Year: 2023
+   Amount: $55,359,000
+   Page: 476, Line: 26
+
+4. CITY UNIVERSITY OF NEW YORK
+   ID: 15419 | Year: 2022
+   Amount: $36,667,000
+   Page: 74, Line: 14
+
+5. HIGHER EDUCATION SERVICES CORPORATION
+   ID: 81001 | Year: 2024
+   Amount: $30,040,000
+   Page: 489, Line: 5
+
+6. DEPARTMENT OF FAMILY ASSISTANCE
+   ID: 52219 | Year: 2023
+   Amount: $24,273,000
+   Page: 354, Line: 9
+
+7. EDUCATION DEPARTMENT
+   ID: 21713 | Year: 2023
+   Amount: $22,543,000
+   Page: 157, Line: 39
+
+8. DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION
+   ID: 17559 | Year: 2019
+   Amount: $20,094,000
+   Page: 95, Line: 30
+
+9. OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION
+   ID: 81003 | Year: 2023
+   Amount: $17,927,000
+   Page: 687, Line: 20
+
+10. DEPARTMENT OF HEALTH
+   ID: 36603 | Year: 2024
+   Amount: $17,880,000
+   Page: 486, Line: 5
+
+
+DISCONTINUED BY AGENCY (TOP 15)
+----------------------------------------
+DEPARTMENT OF LABOR
+  Items: 18 | Amount: $475,271,000
+
+DEPARTMENT OF HEALTH
+  Items: 6 | Amount: $262,009,000
+
+EDUCATION DEPARTMENT
+  Items: 61 | Amount: $117,981,000
+
+DEPARTMENT OF FAMILY ASSISTANCE
+  Items: 19 | Amount: $84,129,500
+
+CITY UNIVERSITY OF NEW YORK
+  Items: 7 | Amount: $39,242,000
+
+DEPARTMENT OF AGRICULTURE AND MARKETS
+  Items: 20 | Amount: $38,589,000
+
+DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION
+  Items: 2 | Amount: $31,094,000
+
+HIGHER EDUCATION SERVICES CORPORATION
+  Items: 5 | Amount: $30,602,000
+
+DEPARTMENT OF ENVIRONMENTAL CONSERVATION
+  Items: 18 | Amount: $28,752,000
+
+OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION
+  Items: 6 | Amount: $19,290,000
+
+DEPARTMENT OF MENTAL HYGIENE
+  Items: 2 | Amount: $5,617,000
+
+DEPARTMENT OF MOTOR VEHICLES
+  Items: 1 | Amount: $4,282,000
+
+DEPARTMENT OF PUBLIC SERVICE
+  Items: 1 | Amount: $3,057,000
+
+DEPARTMENT OF LAW
+  Items: 1 | Amount: $2,864,000
+
+DIVISION OF HOMELAND SECURITY AND EMERGENCY SERVICES
+  Items: 3 | Amount: $1,412,000

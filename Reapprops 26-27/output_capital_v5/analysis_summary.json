@@ -1,0 +1,94 @@
+{
+  "generated_at": "2026-02-18T11:21:33.433563",
+  "totals": {
+    "enacted_records": 3510,
+    "executive_records": 3676,
+    "discontinued": 207,
+    "continued": 1387,
+    "modified": 1916,
+    "discontinued_amount": 1602731000,
+    "continued_amount": 26083723038
+  },
+  "by_agency": {
+    "NEW YORK STATE URBAN DEVELOPMENT CORPORATION": {
+      "count": 5,
+      "amount": 517157000
+    },
+    "DEPARTMENT OF ENVIRONMENTAL CONSERVATION": {
+      "count": 53,
+      "amount": 280944000
+    },
+    "DIVISION OF HOUSING AND COMMUNITY RENEWAL": {
+      "count": 3,
+      "amount": 134745000
+    },
+    "EDUCATION DEPARTMENT": {
+      "count": 6,
+      "amount": 114317000
+    },
+    "DEPARTMENT OF HEALTH": {
+      "count": 4,
+      "amount": 96593000
+    },
+    "DEPARTMENT OF TRANSPORTATION": {
+      "count": 65,
+      "amount": 80056000
+    },
+    "MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES": {
+      "count": 1,
+      "amount": 80000000
+    },
+    "DEPARTMENT OF FAMILY ASSISTANCE": {
+      "count": 3,
+      "amount": 63294000
+    },
+    "DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION": {
+      "count": 13,
+      "amount": 41727000
+    },
+    "METROPOLITAN TRANSPORTATION AUTHORITY": {
+      "count": 1,
+      "amount": 36000000
+    },
+    "OFFICE OF GENERAL SERVICES": {
+      "count": 8,
+      "amount": 34657000
+    },
+    "DEPARTMENT OF MENTAL HYGIENE": {
+      "count": 19,
+      "amount": 30620000
+    },
+    "DEPARTMENT OF MOTOR VEHICLES": {
+      "count": 2,
+      "amount": 25303000
+    },
+    "OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION": {
+      "count": 8,
+      "amount": 22686000
+    },
+    "DIVISION OF CRIMINAL JUSTICE SERVICES": {
+      "count": 1,
+      "amount": 22566000
+    },
+    "OLYMPIC REGIONAL DEVELOPMENT AUTHORITY": {
+      "count": 3,
+      "amount": 19492000
+    },
+    "DIVISION OF MILITARY AND NAVAL AFFAIRS": {
+      "count": 5,
+      "amount": 2414000
+    },
+    "OFFICE OF VICTIM SERVICES": {
+      "count": 1,
+      "amount": 147000
+    },
+    "CITY UNIVERSITY OF NEW YORK": {
+      "count": 3,
+      "amount": 12000
+    },
+    "DEPARTMENT OF AGRICULTURE AND MARKETS": {
+      "count": 1,
+      "amount": 1000
+    }
+  }
+}

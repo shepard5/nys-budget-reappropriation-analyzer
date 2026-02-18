@@ -19,6 +19,7 @@ Example:
 """
 
 import pdfplumber
+import fitz  # PyMuPDF — used for underline detection
 import pandas as pd
 import re
 import json
@@ -66,22 +67,26 @@ class BudgetRecord:
     chapter_number: Optional[str] = None
     section_number: Optional[str] = None
 
+    # Underline detection (executive budgets use underline = new/changed language)
+    has_underlined_content: bool = False
+    underlined_text: str = ""  # The actual underlined spans concatenated
+
     def composite_key(self) -> str:
         """Generate unique composite key for deduplication and matching.
 
-        Key components: agency|appropriation_id|chapter_year|appropriation_amount
+        Key components: agency|appropriation_id|chapter_year|appropriation_amount|account
 
-        Note: Account is NOT included because the same appropriation can appear
-        under different account names between enacted and executive budgets.
-        Appropriation amount IS included because the same ID can have multiple
-        line items with different original amounts.
+        Account IS included because the same appropriation ID can appear under
+        multiple fund accounts in the same chapter year (e.g., State Purposes
+        Account vs Plant Industry Account). Including account ensures each line
+        item is uniquely identified.
 
         For MISSING_ID records, includes page_number and reappropriation_amount
         to ensure uniqueness (they can't match on ID anyway).
         """
         if self.appropriation_id == "MISSING_ID":
             return f"{self._normalize(self.agency)}|MISSING_ID|{self.chapter_year}|{self.appropriation_amount}|{self.reappropriation_amount}|{self.page_number}"
-        return f"{self._normalize(self.agency)}|{self.appropriation_id}|{self.chapter_year}|{self.appropriation_amount}"
+        return f"{self._normalize(self.agency)}|{self.appropriation_id}|{self.chapter_year}|{self.appropriation_amount}|{self._normalize(self.account)}"
 
     def _normalize(self, text: str) -> str:
         """Normalize text for consistent matching."""
@@ -156,8 +161,8 @@ class ComparisonResult:
     status: str  # "discontinued", "continued", "modified", "likely_reorganized", "missing_id"
     executive_match: Optional[BudgetRecord] = None
     amount_difference: Optional[int] = None
-    match_pass: Optional[str] = None  # "exact", "drop_amount", "fuzzy_text", None
-    similarity_score: Optional[float] = None  # For fuzzy matches
+    match_pass: Optional[str] = None  # "exact_full", "exact_no_acct", "id_chyr_scored", "fuzzy_text", None
+    similarity_score: Optional[float] = None  # For fuzzy/scored matches
 
 
 @dataclass
@@ -307,6 +312,74 @@ class PDFExtractor:
     def __init__(self):
         self.patterns = BudgetPatterns()
 
+    @staticmethod
+    def _extract_underlined_text_from_page(fitz_page) -> Set[str]:
+        """Extract underlined text from a PyMuPDF page using drawing detection.
+
+        NYS budget bills render underlines as thin filled rectangles (drawings)
+        positioned directly below the text they emphasize. Underlined text indicates
+        new or changed language in the executive budget.
+
+        Returns a set of text fragments that have underline drawings beneath them.
+        """
+        underlined = set()
+        try:
+            # Step 1: Find thin horizontal rectangles (underline drawings)
+            paths = fitz_page.get_drawings()
+            underline_rects = []
+            for p in paths:
+                rect = p.get("rect")
+                if rect is None:
+                    continue
+                # Underlines are very thin (< 2pt tall) and wider than a few chars
+                if rect.height < 2 and rect.width > 10:
+                    underline_rects.append(rect)
+
+            if not underline_rects:
+                return underlined
+
+            # Step 2: Find text spans positioned directly above each underline
+            blocks = fitz_page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+
+            for ul_rect in underline_rects:
+                for block in blocks:
+                    if "lines" not in block:
+                        continue
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            span_bbox = fitz.Rect(span["bbox"])
+                            # Check horizontal overlap and vertical proximity
+                            # (text baseline should be just above the underline)
+                            if (span_bbox.x0 < ul_rect.x1 and
+                                span_bbox.x1 > ul_rect.x0 and
+                                abs(span_bbox.y1 - ul_rect.y0) < 5):
+                                text = span["text"].strip()
+                                if text:
+                                    underlined.add(text)
+
+        except Exception:
+            pass  # Gracefully handle any PyMuPDF parsing issues
+        return underlined
+
+    @staticmethod
+    def _tag_records_with_underlines(records: List['BudgetRecord'], underlined_text: Set[str]) -> None:
+        """Tag records whose bill_language contains underlined text fragments.
+
+        Matches underlined fragments against each record's bill language and raw_line.
+        Records with matches get has_underlined_content=True and underlined_text populated.
+        """
+        if not underlined_text:
+            return
+        for record in records:
+            matched_fragments = []
+            record_text = record.bill_language + " " + record.raw_line
+            for fragment in underlined_text:
+                if fragment in record_text:
+                    matched_fragments.append(fragment)
+            if matched_fragments:
+                record.has_underlined_content = True
+                record.underlined_text = " | ".join(sorted(matched_fragments))
+
     def extract_records(self, pdf_path: Path, source_budget: str) -> Tuple[List[BudgetRecord], List[BudgetaryAccountRecord]]:
         """
         Extract all budget records from a PDF.
@@ -325,6 +398,15 @@ class PDFExtractor:
 
         print(f"  Opening PDF: {pdf_path.name}")
 
+        # Open PyMuPDF document for underline detection (executive budgets only)
+        fitz_doc = None
+        if source_budget == "executive":
+            try:
+                fitz_doc = fitz.open(str(pdf_path))
+                print(f"  Underline detection enabled (PyMuPDF)")
+            except Exception as e:
+                print(f"  Warning: Could not open PDF with PyMuPDF for underline detection: {e}")
+
         with pdfplumber.open(pdf_path) as pdf:
             total_pages = len(pdf.pages)
             print(f"  Total pages: {total_pages}")
@@ -342,6 +424,12 @@ class PDFExtractor:
                     text, context, page_num, pdf_path.name, source_budget
                 )
 
+                # Tag records with underline info from executive PDFs
+                if fitz_doc and page_num <= len(fitz_doc):
+                    fitz_page = fitz_doc[page_num - 1]  # 0-indexed
+                    underlined = self._extract_underlined_text_from_page(fitz_page)
+                    self._tag_records_with_underlines(page_records, underlined)
+
                 # Deduplicate as we go
                 for record in page_records:
                     key = record.composite_key()
@@ -355,6 +443,11 @@ class PDFExtractor:
                 # Progress indicator
                 if page_num % 100 == 0:
                     print(f"    Progress: {page_num}/{total_pages} pages ({page_num/total_pages*100:.1f}%)")
+
+        if fitz_doc:
+            underline_count = sum(1 for r in records if r.has_underlined_content)
+            print(f"  Records with underlined content: {underline_count}")
+            fitz_doc.close()
 
         print(f"  Extracted {len(records)} unique records")
         if budgetary_records:
@@ -957,13 +1050,16 @@ class DeduplicationEngine:
 class BudgetComparator:
     """Compares enacted vs executive budgets to find discontinued items.
 
-    Uses three-pass matching with progressive relaxation:
-    - Pass 1 (Exact): agency|approp_id|chapter_year|approp_amount
-    - Pass 2 (Drop amount): agency|approp_id|chapter_year — catches funding level changes
-    - Pass 3 (Fuzzy text): agency|chapter_year + bill_language similarity — catches reorganizations
+    Uses four-pass matching with progressive relaxation:
+    - Pass 1 (Exact full): agency|approp_id|chapter_year|approp_amount|account — gold standard
+    - Pass 2 (Drop account): agency|approp_id|chapter_year|approp_amount — catches account name shifts
+    - Pass 3 (Drop amount, scored): agency|approp_id|chapter_year — catches funding changes,
+      scored by text similarity to avoid wrong-account grabs
+    - Pass 4 (Fuzzy text): agency|chapter_year + bill_language similarity — catches ID/amount restructuring
     """
 
     FUZZY_THRESHOLD = 0.75  # Minimum similarity score for fuzzy text match
+    SCORED_MATCH_THRESHOLD = 0.60  # Minimum text similarity for Pass 3 scored matches
 
     @staticmethod
     def _normalize_text_for_similarity(text: str) -> str:
@@ -1027,10 +1123,14 @@ class BudgetComparator:
         Items from enacted budget should appear as reappropriations in executive.
         Missing items = discontinued spending authority.
 
-        Three-pass matching:
-        - Pass 1 (Exact): agency|approp_id|chapter_year|approp_amount
-        - Pass 2 (Drop amount): agency|approp_id|chapter_year
-        - Pass 3 (Fuzzy text): agency|chapter_year + bill_language similarity >= threshold
+        Four-pass matching with progressive relaxation:
+        - Pass 1 (Exact full): agency|approp_id|chapter_year|approp_amount|account
+        - Pass 2 (Drop account): agency|approp_id|chapter_year|approp_amount
+        - Pass 3 (Drop amount, scored): agency|approp_id|chapter_year + text similarity scoring
+        - Pass 4 (Fuzzy text): agency|chapter_year + bill_language similarity >= threshold
+
+        All lookups use defaultdict(list) to prevent silent overwrites when
+        multiple records share a key.
 
         MISSING_ID records bypass matching entirely and go to the missing_id bucket.
         """
@@ -1038,31 +1138,40 @@ class BudgetComparator:
         results.all_enacted = enacted_records
         results.all_executive = executive_records
 
-        # ---- Build executive lookups ----
+        # ---- Build executive lookups (all use list to prevent overwrites) ----
 
-        # Pass 1 lookup: exact composite key
-        exec_by_exact: Dict[str, BudgetRecord] = {}
+        # Pass 1 lookup: full composite key (agency|id|chyr|amt|account)
+        exec_by_full: Dict[str, List[BudgetRecord]] = defaultdict(list)
         for record in executive_records:
             if record.appropriation_id != "MISSING_ID":
                 key = record.composite_key()
-                exec_by_exact[key] = record
+                exec_by_full[key].append(record)
 
-        # Pass 2 lookup: agency|approp_id|chapter_year (drop amount)
-        exec_by_drop_amount: Dict[str, List[BudgetRecord]] = defaultdict(list)
+        # Pass 2 lookup: agency|approp_id|chapter_year|approp_amount (drop account)
+        exec_by_no_acct: Dict[str, List[BudgetRecord]] = defaultdict(list)
+        for record in executive_records:
+            if record.appropriation_id != "MISSING_ID":
+                key = f"{record._normalize(record.agency)}|{record.appropriation_id}|{record.chapter_year}|{record.appropriation_amount}"
+                exec_by_no_acct[key].append(record)
+
+        # Pass 3 lookup: agency|approp_id|chapter_year (drop amount — scored by text)
+        exec_by_id_chyr: Dict[str, List[BudgetRecord]] = defaultdict(list)
         for record in executive_records:
             if record.appropriation_id != "MISSING_ID":
                 key = f"{record._normalize(record.agency)}|{record.appropriation_id}|{record.chapter_year}"
-                exec_by_drop_amount[key].append(record)
+                exec_by_id_chyr[key].append(record)
 
-        # Pass 3 lookup: agency|chapter_year -> list of (normalized_text, record)
+        # Pass 4 lookup: agency|chapter_year -> list of (normalized_text, record)
         exec_by_agency_chapter: Dict[str, List[Tuple[str, BudgetRecord]]] = defaultdict(list)
         for record in executive_records:
-            key = f"{record._normalize(record.agency)}|{record.chapter_year}"
-            norm_text = self._normalize_text_for_similarity(record.bill_language)
-            exec_by_agency_chapter[key].append((norm_text, record))
+            if record.appropriation_id != "MISSING_ID":
+                key = f"{record._normalize(record.agency)}|{record.chapter_year}"
+                norm_text = self._normalize_text_for_similarity(record.bill_language)
+                exec_by_agency_chapter[key].append((norm_text, record))
 
-        print(f"  Executive lookups: {len(exec_by_exact)} exact keys, "
-              f"{len(exec_by_drop_amount)} drop-amount keys, "
+        print(f"  Executive lookups: {len(exec_by_full)} full keys, "
+              f"{len(exec_by_no_acct)} no-account keys, "
+              f"{len(exec_by_id_chyr)} id|chyr keys, "
               f"{len(exec_by_agency_chapter)} agency|chapter groups")
 
         # ---- Track which executive records have been claimed ----
@@ -1080,68 +1189,126 @@ class BudgetComparator:
             else:
                 enacted_with_id.append(enacted)
 
-        # ---- Pass 1: Exact match ----
+        # ---- Pass 1: Exact full key (agency|id|chyr|amt|account) ----
         unmatched_after_p1 = []
         for enacted in enacted_with_id:
             key = enacted.composite_key()
-            exec_record = exec_by_exact.get(key)
+            candidates = exec_by_full.get(key, [])
 
-            if exec_record and key not in claimed_exec_keys:
-                claimed_exec_keys.add(key)
-                if enacted.reappropriation_amount == exec_record.reappropriation_amount:
+            # Find first unclaimed candidate (key is fully unique, should be 0-1)
+            matched = None
+            for candidate in candidates:
+                cand_key = candidate.composite_key()
+                if cand_key not in claimed_exec_keys:
+                    matched = candidate
+                    break
+
+            if matched:
+                claimed_exec_keys.add(matched.composite_key())
+                if enacted.reappropriation_amount == matched.reappropriation_amount:
                     results.continued.append(ComparisonResult(
                         enacted_record=enacted,
                         status='continued',
-                        executive_match=exec_record,
-                        match_pass='exact'
+                        executive_match=matched,
+                        match_pass='exact_full'
                     ))
                 else:
                     results.modified.append(ComparisonResult(
                         enacted_record=enacted,
                         status='modified',
-                        executive_match=exec_record,
-                        amount_difference=exec_record.reappropriation_amount - enacted.reappropriation_amount,
-                        match_pass='exact'
+                        executive_match=matched,
+                        amount_difference=matched.reappropriation_amount - enacted.reappropriation_amount,
+                        match_pass='exact_full'
                     ))
             else:
                 unmatched_after_p1.append(enacted)
 
-        print(f"  Pass 1 (exact): {len(enacted_with_id) - len(unmatched_after_p1)} matched, "
+        print(f"  Pass 1 (exact full): {len(enacted_with_id) - len(unmatched_after_p1)} matched, "
               f"{len(unmatched_after_p1)} unmatched")
 
-        # ---- Pass 2: Drop amount (same ID + chapter, different amount) ----
+        # ---- Pass 2: Drop account (agency|id|chyr|amt — catches account name shifts) ----
         unmatched_after_p2 = []
         for enacted in unmatched_after_p1:
-            key = f"{enacted._normalize(enacted.agency)}|{enacted.appropriation_id}|{enacted.chapter_year}"
-            candidates = exec_by_drop_amount.get(key, [])
+            key = f"{enacted._normalize(enacted.agency)}|{enacted.appropriation_id}|{enacted.chapter_year}|{enacted.appropriation_amount}"
+            candidates = exec_by_no_acct.get(key, [])
 
-            # Find best unclaimed candidate
-            best_match = None
+            # Find first unclaimed candidate (key is unique for real IDs per our analysis)
+            matched = None
             for candidate in candidates:
                 cand_key = candidate.composite_key()
                 if cand_key not in claimed_exec_keys:
-                    best_match = candidate
+                    matched = candidate
                     break
 
-            if best_match:
-                claimed_exec_keys.add(best_match.composite_key())
-                results.modified.append(ComparisonResult(
-                    enacted_record=enacted,
-                    status='modified',
-                    executive_match=best_match,
-                    amount_difference=best_match.reappropriation_amount - enacted.reappropriation_amount,
-                    match_pass='drop_amount'
-                ))
+            if matched:
+                claimed_exec_keys.add(matched.composite_key())
+                if enacted.reappropriation_amount == matched.reappropriation_amount:
+                    results.continued.append(ComparisonResult(
+                        enacted_record=enacted,
+                        status='continued',
+                        executive_match=matched,
+                        match_pass='exact_no_acct'
+                    ))
+                else:
+                    results.modified.append(ComparisonResult(
+                        enacted_record=enacted,
+                        status='modified',
+                        executive_match=matched,
+                        amount_difference=matched.reappropriation_amount - enacted.reappropriation_amount,
+                        match_pass='exact_no_acct'
+                    ))
             else:
                 unmatched_after_p2.append(enacted)
 
-        print(f"  Pass 2 (drop amount): {len(unmatched_after_p1) - len(unmatched_after_p2)} matched, "
+        print(f"  Pass 2 (drop account): {len(unmatched_after_p1) - len(unmatched_after_p2)} matched, "
               f"{len(unmatched_after_p2)} unmatched")
 
-        # ---- Pass 3: Fuzzy text match (same agency + chapter, similar bill language) ----
+        # ---- Pass 3: Drop amount, scored (agency|id|chyr + text similarity) ----
+        # This key has collisions (same ID across different accounts in same chapter year).
+        # Score candidates by bill language similarity to pick the RIGHT match.
         unmatched_after_p3 = []
-        fuzzy_matched = 0
+        p3_matched = 0
         for enacted in unmatched_after_p2:
+            key = f"{enacted._normalize(enacted.agency)}|{enacted.appropriation_id}|{enacted.chapter_year}"
+            candidates = exec_by_id_chyr.get(key, [])
+
+            enacted_norm = self._normalize_text_for_similarity(enacted.bill_language)
+
+            # Score all unclaimed candidates by text similarity
+            best_score = 0.0
+            best_candidate = None
+            for candidate in candidates:
+                cand_key = candidate.composite_key()
+                if cand_key in claimed_exec_keys:
+                    continue
+                cand_norm = self._normalize_text_for_similarity(candidate.bill_language)
+                score = self._text_similarity(enacted_norm, cand_norm)
+                if score > best_score:
+                    best_score = score
+                    best_candidate = candidate
+
+            if best_candidate and best_score >= self.SCORED_MATCH_THRESHOLD:
+                claimed_exec_keys.add(best_candidate.composite_key())
+                results.modified.append(ComparisonResult(
+                    enacted_record=enacted,
+                    status='modified',
+                    executive_match=best_candidate,
+                    amount_difference=best_candidate.reappropriation_amount - enacted.reappropriation_amount,
+                    match_pass='id_chyr_scored',
+                    similarity_score=best_score
+                ))
+                p3_matched += 1
+            else:
+                unmatched_after_p3.append(enacted)
+
+        print(f"  Pass 3 (id+chyr scored): {p3_matched} matched, "
+              f"{len(unmatched_after_p3)} unmatched")
+
+        # ---- Pass 4: Fuzzy text match (agency|chapter_year + bill language similarity) ----
+        # Catches cases where ID AND/OR amount changed but the legislative text is the same.
+        unmatched_after_p4 = []
+        fuzzy_matched = 0
+        for enacted in unmatched_after_p3:
             agency_chapter_key = f"{enacted._normalize(enacted.agency)}|{enacted.chapter_year}"
             candidates = exec_by_agency_chapter.get(agency_chapter_key, [])
 
@@ -1170,13 +1337,13 @@ class BudgetComparator:
                 ))
                 fuzzy_matched += 1
             else:
-                unmatched_after_p3.append(enacted)
+                unmatched_after_p4.append(enacted)
 
-        print(f"  Pass 3 (fuzzy text): {fuzzy_matched} matched, "
-              f"{len(unmatched_after_p3)} unmatched")
+        print(f"  Pass 4 (fuzzy text): {fuzzy_matched} matched, "
+              f"{len(unmatched_after_p4)} unmatched")
 
         # ---- Everything left is discontinued ----
-        for enacted in unmatched_after_p3:
+        for enacted in unmatched_after_p4:
             results.discontinued.append(ComparisonResult(
                 enacted_record=enacted,
                 status='discontinued'
@@ -1306,7 +1473,10 @@ class ReportGenerator:
                 row['exec_match_chapter_year'] = em.chapter_year
                 row['exec_match_approp_amount'] = em.appropriation_amount
                 row['exec_match_reapprop_amount'] = em.reappropriation_amount
+                row['exec_match_account'] = em.account
                 row['exec_match_bill_language'] = em.bill_language
+                row['exec_has_underlined_content'] = em.has_underlined_content
+                row['exec_underlined_text'] = em.underlined_text
                 row['amount_difference'] = result.amount_difference or 0
             rows.append(row)
 
@@ -1335,6 +1505,8 @@ class ReportGenerator:
                 'fiscal_year': r.fiscal_year,
                 'raw_line': r.raw_line,
                 'source_file': r.source_file,
+                'has_underlined_content': r.has_underlined_content,
+                'underlined_text': r.underlined_text,
                 'composite_key': r.composite_key()
             })
 
@@ -1409,7 +1581,7 @@ class ReportGenerator:
             f"  (of which {sum(1 for r in results.all_enacted if r.appropriation_id == 'MISSING_ID')} have no approp ID)",
             f"Executive Records Extracted: {len(results.all_executive):,}",
             "",
-            "COMPARISON RESULTS (3-Pass Matching)",
+            "COMPARISON RESULTS (4-Pass Matching)",
             "-" * 40,
             f"Continued (Exact match, same amounts): {len(results.continued):,}",
             f"Modified (ID matched, amount changed):  {len(results.modified):,}",
@@ -1428,9 +1600,10 @@ class ReportGenerator:
                 if r.match_pass:
                     pass_counts[r.match_pass] += 1
         lines.extend([
-            f"  Pass 1 (exact key):    {pass_counts.get('exact', 0):,}",
-            f"  Pass 2 (drop amount):  {pass_counts.get('drop_amount', 0):,}",
-            f"  Pass 3 (fuzzy text):   {pass_counts.get('fuzzy_text', 0):,}",
+            f"  Pass 1 (exact full):       {pass_counts.get('exact_full', 0):,}",
+            f"  Pass 2 (drop account):     {pass_counts.get('exact_no_acct', 0):,}",
+            f"  Pass 3 (id+chyr scored):   {pass_counts.get('id_chyr_scored', 0):,}",
+            f"  Pass 4 (fuzzy text):       {pass_counts.get('fuzzy_text', 0):,}",
             "",
             "FINANCIAL SUMMARY",
             "-" * 40,
@@ -1598,8 +1771,8 @@ class NYSBudgetAnalyzer:
         if enacted_budgetary or executive_budgetary:
             print(f"  (Filtered {len(enacted_budgetary)} enacted / {len(executive_budgetary)} executive budgetary sub-lines)")
 
-        # Step 4: Compare budgets (3-pass matching)
-        print("\n[4/5] Comparing budgets (3-pass matching)...")
+        # Step 4: Compare budgets (4-pass matching)
+        print("\n[4/5] Comparing budgets (4-pass matching)...")
         results = self.comparator.compare(enacted_deduped, executive_deduped)
         print(f"  Continued:          {len(results.continued):,}")
         print(f"  Modified:           {len(results.modified):,}")

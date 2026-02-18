@@ -1,0 +1,132 @@
+================================================================================
+NYS BUDGET REAPPROPRIATION ANALYSIS - VERIFICATION REPORT
+Generated: 2026-02-18 16:04:54
+================================================================================
+
+EXTRACTION SUMMARY
+----------------------------------------
+Enacted Records Extracted: 1,251
+  (of which 4 have no approp ID)
+Executive Records Extracted: 1,266
+
+COMPARISON RESULTS (4-Pass Matching)
+----------------------------------------
+Continued (Exact match, same amounts): 405
+Modified (ID matched, amount changed):  449
+Likely Reorganized (Fuzzy text match):  0
+Discontinued (No match found):          393
+Missing ID (No approp ID extracted):    4
+
+MATCH PASS BREAKDOWN
+----------------------------------------
+  Pass 1 (exact full):       608
+  Pass 2 (drop account):     226
+  Pass 3 (id+chyr scored):   20
+  Pass 4 (fuzzy text):       0
+
+FINANCIAL SUMMARY
+----------------------------------------
+Total Discontinued Amount:        $1,379,391,500
+Total Continued Amount:            $8,218,557,500
+Total Likely Reorganized Amount:   $0
+Total Missing ID Amount:           $1,332,000
+
+TOP 10 LARGEST DISCONTINUED ITEMS
+----------------------------------------
+1. DEPARTMENT OF LABOR
+   ID: 34218 | Year: 2021
+   Amount: $447,750,000
+   Page: 580, Line: 37
+
+2. DEPARTMENT OF HEALTH
+   ID: 29539 | Year: 2023
+   Amount: $181,072,000
+   Page: 475, Line: 46
+
+3. DEPARTMENT OF HEALTH
+   ID: 29540 | Year: 2023
+   Amount: $55,359,000
+   Page: 476, Line: 26
+
+4. DEPARTMENT OF HEALTH
+   ID: 26872 | Year: 2023
+   Amount: $42,315,000
+   Page: 479, Line: 19
+
+5. CITY UNIVERSITY OF NEW YORK
+   ID: 15419 | Year: 2022
+   Amount: $36,667,000
+   Page: 74, Line: 14
+
+6. HIGHER EDUCATION SERVICES CORPORATION
+   ID: 81001 | Year: 2024
+   Amount: $30,040,000
+   Page: 489, Line: 5
+
+7. DEPARTMENT OF FAMILY ASSISTANCE
+   ID: 52219 | Year: 2023
+   Amount: $24,273,000
+   Page: 354, Line: 9
+
+8. EDUCATION DEPARTMENT
+   ID: 21713 | Year: 2023
+   Amount: $22,543,000
+   Page: 157, Line: 39
+
+9. DEPARTMENT OF MENTAL HYGIENE
+   ID: 37829 | Year: 2024
+   Amount: $18,975,000
+   Page: 648, Line: 4
+
+10. OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION
+   ID: 81003 | Year: 2023
+   Amount: $17,927,000
+   Page: 687, Line: 20
+
+
+DISCONTINUED BY AGENCY (TOP 15)
+----------------------------------------
+DEPARTMENT OF LABOR
+  Items: 22 | Amount: $491,197,000
+
+DEPARTMENT OF HEALTH
+  Items: 27 | Amount: $366,403,000
+
+EDUCATION DEPARTMENT
+  Items: 78 | Amount: $138,337,000
+
+DEPARTMENT OF FAMILY ASSISTANCE
+  Items: 44 | Amount: $118,936,500
+
+DEPARTMENT OF ENVIRONMENTAL CONSERVATION
+  Items: 39 | Amount: $49,375,000
+
+CITY UNIVERSITY OF NEW YORK
+  Items: 28 | Amount: $39,242,000
+
+DEPARTMENT OF MENTAL HYGIENE
+  Items: 8 | Amount: $37,216,000
+
+DEPARTMENT OF AGRICULTURE AND MARKETS
+  Items: 36 | Amount: $34,313,000
+
+HIGHER EDUCATION SERVICES CORPORATION
+  Items: 4 | Amount: $30,392,000
+
+OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION
+  Items: 13 | Amount: $22,410,000
+
+DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION
+  Items: 5 | Amount: $19,093,000
+
+DIVISION OF HOMELAND SECURITY AND EMERGENCY SERVICES
+  Items: 9 | Amount: $9,825,000
+
+DIVISION OF CRIMINAL JUSTICE SERVICES
+  Items: 12 | Amount: $8,294,000
+
+DIVISION OF MILITARY AND NAVAL AFFAIRS
+  Items: 2 | Amount: $3,338,000
+
+DEPARTMENT OF PUBLIC SERVICE
+  Items: 1 | Amount: $3,057,000

@@ -1,0 +1,132 @@
+================================================================================
+NYS BUDGET REAPPROPRIATION ANALYSIS - VERIFICATION REPORT
+Generated: 2026-02-18 16:08:18
+================================================================================
+
+EXTRACTION SUMMARY
+----------------------------------------
+Enacted Records Extracted: 3,531
+  (of which 7 have no approp ID)
+Executive Records Extracted: 3,690
+
+COMPARISON RESULTS (4-Pass Matching)
+----------------------------------------
+Continued (Exact match, same amounts): 1,375
+Modified (ID matched, amount changed):  1,833
+Likely Reorganized (Fuzzy text match):  3
+Discontinued (No match found):          313
+Missing ID (No approp ID extracted):    7
+
+MATCH PASS BREAKDOWN
+----------------------------------------
+  Pass 1 (exact full):       2,588
+  Pass 2 (drop account):     584
+  Pass 3 (id+chyr scored):   36
+  Pass 4 (fuzzy text):       3
+
+FINANCIAL SUMMARY
+----------------------------------------
+Total Discontinued Amount:        $2,120,937,200
+Total Continued Amount:            $26,012,763,038
+Total Likely Reorganized Amount:   $0
+Total Missing ID Amount:           $223,829,000
+
+TOP 10 LARGEST DISCONTINUED ITEMS
+----------------------------------------
+1. NEW YORK STATE URBAN DEVELOPMENT CORPORATION
+   ID: 58017 | Year: 2022
+   Amount: $264,774,000
+   Page: 1164, Line: 35
+
+2. DEPARTMENT OF TRANSPORTATION
+   ID: 60551 | Year: 2023
+   Amount: $191,480,000
+   Page: 1031, Line: 12
+
+3. MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES
+   ID: 85104 | Year: 2024
+   Amount: $178,719,000
+   Page: 1208, Line: 38
+
+4. DIVISION OF HOUSING AND COMMUNITY RENEWAL
+   ID: 30904 | Year: 2021
+   Amount: $143,710,000
+   Page: 489, Line: 44
+
+5. DIVISION OF HOUSING AND COMMUNITY RENEWAL
+   ID: 30904 | Year: 2018
+   Amount: $132,000,000
+   Page: 490, Line: 1
+
+6. DEPARTMENT OF HEALTH
+   ID: 85501 | Year: 2017
+   Amount: $93,114,000
+   Page: 447, Line: 29
+
+7. DEPARTMENT OF MOTOR VEHICLES
+   ID: 57050 | Year: 2024
+   Amount: $78,127,000
+   Page: 648, Line: 28
+
+8. NEW YORK STATE URBAN DEVELOPMENT CORPORATION
+   ID: 85515 | Year: 2017
+   Amount: $65,000,000
+   Page: 1153, Line: 32
+
+9. DEPARTMENT OF FAMILY ASSISTANCE
+   ID: 52220 | Year: 2021
+   Amount: $64,472,000
+   Page: 419, Line: 27
+
+10. DEPARTMENT OF MOTOR VEHICLES
+   ID: 60090 | Year: 2024
+   Amount: $58,930,000
+   Page: 648, Line: 30
+
+
+DISCONTINUED BY AGENCY (TOP 15)
+----------------------------------------
+NEW YORK STATE URBAN DEVELOPMENT CORPORATION
+  Items: 7 | Amount: $432,616,000
+
+DIVISION OF HOUSING AND COMMUNITY RENEWAL
+  Items: 15 | Amount: $370,964,000
+
+DEPARTMENT OF TRANSPORTATION
+  Items: 75 | Amount: $241,951,000
+
+MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES
+  Items: 7 | Amount: $241,058,000
+
+DEPARTMENT OF MOTOR VEHICLES
+  Items: 7 | Amount: $165,886,000
+
+DEPARTMENT OF HEALTH
+  Items: 11 | Amount: $139,685,000
+
+DEPARTMENT OF ENVIRONMENTAL CONSERVATION
+  Items: 59 | Amount: $136,896,000
+
+DEPARTMENT OF FAMILY ASSISTANCE
+  Items: 12 | Amount: $88,709,000
+
+DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION
+  Items: 18 | Amount: $41,742,000
+
+DIVISION OF CRIMINAL JUSTICE SERVICES
+  Items: 1 | Amount: $40,655,000
+
+DEPARTMENT OF MENTAL HYGIENE
+  Items: 26 | Amount: $38,491,000
+
+METROPOLITAN TRANSPORTATION AUTHORITY
+  Items: 1 | Amount: $36,000,000
+
+OFFICE OF GENERAL SERVICES
+  Items: 8 | Amount: $30,758,000
+
+EDUCATION DEPARTMENT
+  Items: 15 | Amount: $30,019,200
+
+OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION
+  Items: 27 | Amount: $29,000,000

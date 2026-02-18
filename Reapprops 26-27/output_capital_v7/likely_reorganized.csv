@@ -1,0 +1,31 @@
+status,match_pass,similarity_score,agency,budget_type,fund_type,account,appropriation_id,chapter_year,appropriation_amount,reappropriation_amount,bill_language,page_number,line_number,fiscal_year,source_file,composite_key,exec_match_approp_id,exec_match_chapter_year,exec_match_approp_amount,exec_match_reapprop_amount,exec_match_account,exec_match_bill_language,exec_has_underlined_content,exec_underlined_text,amount_difference
+likely_reorganized,fuzzy_text,0.769,DEPARTMENT OF TRANSPORTATION,CAPITAL PROJECTS,Capital Projects Fund,Transportation Account - 31354,50000,2025,5873000,0,"835 12554-09-5 DEPARTMENT OF TRANSPORTATION CAPITAL PROJECTS 2025-26 1 For the continuing comprehensive transporta- 2 tion planning and coordinated support 3 undertaken as part of the united work 4 programs of participating local planning 5 or municipal agreements in accordance with 6 grant agreements approved by the federal 7 transit administration or the federal 8 highway administration (53243). 9 Personal service (17M12530) (50000) ............ 5,873,000",835,9,2025-26,CAP 25-26.pdf,DEPARTMENT OF TRANSPORTATION|50000|2025|5873000|TRANSPORTATION ACCOUNT - 31354,53243,2025,5873000,4470000,DOT Federal Account - 25381,"38 By chapter 54, section 1, of the laws of 2025:
+39 For the continuing comprehensive transportation planning and
+40 coordinated support undertaken as part of the united work programs
+41 of participating local planning or municipal agreements in
+42 accordance with grant agreements approved by the federal transit
+43 administration or the federal highway administration (53243).
+44 Personal service (17M12530) (50000) ... 5,873,000 ... (re. $4,470,000)",False,,4470000
+likely_reorganized,fuzzy_text,0.818,DEPARTMENT OF TRANSPORTATION,CAPITAL PROJECTS,Capital Projects Fund,Highway and Bridge Capital Account - 30051,50000,2025,244387000,0,"10 Design and Construction 11 For engineering services, including personal 12 services, nonpersonal services, and fringe 13 benefits, including, but not limited to, 14 the preparation of designs, plans, spec- 15 ifications and estimates; construction 16 management and supervision; and 17 appraisals, surveys, testing, and environ- 18 mental impact statements for transporta- 19 tion projects, and for suballocation of 20 $575,000 to the office of the inspector 21 general. 22 Notwithstanding any other provision of law 23 to the contrary, the OGS Interchange and 24 Transfer Authority and the IT Interchange 25 and Transfer Authority as defined in the 26 2025-26 state fiscal year state operations 27 appropriation for the budget division 28 program of the division of the budget, are 29 deemed fully incorporated herein and a 30 part of this appropriation as if fully 31 stated (53166). 32 Personal service (17E12530) (50000) .......... 244,387,000",850,32,2025-26,CAP 25-26.pdf,DEPARTMENT OF TRANSPORTATION|50000|2025|244387000|HIGHWAY AND BRIDGE CAPITAL ACCOUNT - 30051,53166,2025,244387000,244387000,Highway and Bridge Capital Account - 30051,"23 By chapter 54, section 1, of the laws of 2025:
+24 For engineering services, including personal services, nonpersonal
+25 services, and fringe benefits, including, but not limited to, the
+26 preparation of designs, plans, specifications and estimates;
+27 construction management and supervision; and appraisals, surveys,
+28 testing, and environmental impact statements for transportation
+29 projects, and for suballocation of $575,000 to the office of the
+30 inspector general.
+31 Notwithstanding any other provision of law to the contrary, the OGS
+32 Interchange and Transfer Authority and the IT Interchange and
+33 Transfer Authority as defined in the 2025-26 state fiscal year state
+34 operations appropriation for the budget division program of the
+35 division of the budget, are deemed fully incorporated herein and a
+36 part of this appropriation as if fully stated (53166).
+37 Personal service (17E12530) (50000) ..................................
+38 244,387,000 ..................................... (re. $244,387,000)",False,,244387000
+likely_reorganized,fuzzy_text,0.821,DEPARTMENT OF TRANSPORTATION,CAPITAL PROJECTS,Capital Projects Fund,Highway and Bridge Capital Account - 30051,57050,2025,232965000,0,"36 For the costs of the contract services 37 provided by private firms including, but 38 not limited to, the preparation of 39 designs, plans, specifications and esti- 40 mates; construction management and super- 41 vision; and appraisals, surveys, testing, 42 and environmental impact statements for 43 transportation projects (53105). 44 Nonpersonal service (17EP2530) (57050) ....... 232,965,000",850,44,2025-26,CAP 25-26.pdf,DEPARTMENT OF TRANSPORTATION|57050|2025|232965000|HIGHWAY AND BRIDGE CAPITAL ACCOUNT - 30051,53105,2025,232965000,232826000,Highway and Bridge Capital Account - 30051,"45 For the costs of the contract services provided by private firms
+46 including, but not limited to, the preparation of designs, plans,
+47 specifications and estimates; construction management and
+48 supervision; and appraisals, surveys, testing, and environmental
+49 impact statements for transportation projects (53105).
+50 Nonpersonal service (17EP2530) (57050) ...............................
+51 232,965,000 ..................................... (re. $232,826,000)",False,,232826000

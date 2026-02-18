@@ -1,0 +1,99 @@
+{
+  "generated_at": "2026-02-18T16:04:54.210039",
+  "totals": {
+    "enacted_records": 1251,
+    "executive_records": 1266,
+    "continued": 405,
+    "modified": 449,
+    "likely_reorganized": 0,
+    "discontinued": 393,
+    "missing_id": 4,
+    "continued_amount": 8218557500,
+    "modified_amount": 3352527820,
+    "likely_reorganized_amount": 0,
+    "discontinued_amount": 1379391500,
+    "missing_id_amount": 1332000
+  },
+  "by_agency": {
+    "DEPARTMENT OF LABOR": {
+      "count": 22,
+      "amount": 491197000
+    },
+    "DEPARTMENT OF HEALTH": {
+      "count": 27,
+      "amount": 366403000
+    },
+    "EDUCATION DEPARTMENT": {
+      "count": 78,
+      "amount": 138337000
+    },
+    "DEPARTMENT OF FAMILY ASSISTANCE": {
+      "count": 44,
+      "amount": 118936500
+    },
+    "DEPARTMENT OF ENVIRONMENTAL CONSERVATION": {
+      "count": 39,
+      "amount": 49375000
+    },
+    "CITY UNIVERSITY OF NEW YORK": {
+      "count": 28,
+      "amount": 39242000
+    },
+    "DEPARTMENT OF MENTAL HYGIENE": {
+      "count": 8,
+      "amount": 37216000
+    },
+    "DEPARTMENT OF AGRICULTURE AND MARKETS": {
+      "count": 36,
+      "amount": 34313000
+    },
+    "HIGHER EDUCATION SERVICES CORPORATION": {
+      "count": 4,
+      "amount": 30392000
+    },
+    "OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION": {
+      "count": 13,
+      "amount": 22410000
+    },
+    "DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION": {
+      "count": 5,
+      "amount": 19093000
+    },
+    "DIVISION OF HOMELAND SECURITY AND EMERGENCY SERVICES": {
+      "count": 9,
+      "amount": 9825000
+    },
+    "DIVISION OF CRIMINAL JUSTICE SERVICES": {
+      "count": 12,
+      "amount": 8294000
+    },
+    "DIVISION OF MILITARY AND NAVAL AFFAIRS": {
+      "count": 2,
+      "amount": 3338000
+    },
+    "DEPARTMENT OF PUBLIC SERVICE": {
+      "count": 1,
+      "amount": 3057000
+    },
+    "DEPARTMENT OF LAW": {
+      "count": 1,
+      "amount": 2864000
+    },
+    "DEPARTMENT OF FINANCIAL SERVICES": {
+      "count": 5,
+      "amount": 1492000
+    },
+    "MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES": {
+      "count": 45,
+      "amount": 1368000
+    },
+    "DIVISION OF HOUSING AND COMMUNITY RENEWAL": {
+      "count": 1,
+      "amount": 1342000
+    },
+    "JUSTICE CENTER FOR THE PROTECTION": {
+      "count": 2,
+      "amount": 510000
+    }
+  }
+}

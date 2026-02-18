@@ -1,0 +1,131 @@
+================================================================================
+NYS BUDGET REAPPROPRIATION ANALYSIS - VERIFICATION REPORT
+Generated: 2026-02-18 13:42:34
+================================================================================
+
+EXTRACTION SUMMARY
+----------------------------------------
+Enacted Records Extracted: 7,495
+  (of which 797 have no approp ID)
+Executive Records Extracted: 5,823
+
+COMPARISON RESULTS (3-Pass Matching)
+----------------------------------------
+Continued (Exact match, same amounts): 2,263
+Modified (ID matched, amount changed):  2,150
+Likely Reorganized (Fuzzy text match):  12
+Discontinued (No match found):          2,273
+Missing ID (No approp ID extracted):    797
+
+MATCH PASS BREAKDOWN
+----------------------------------------
+  Pass 1 (exact key):    4,384
+  Pass 2 (drop amount):  29
+  Pass 3 (fuzzy text):   12
+
+FINANCIAL SUMMARY
+----------------------------------------
+Total Discontinued Amount:        $127,969,192,196
+Total Continued Amount:            $76,619,504,845
+Total Likely Reorganized Amount:   $12,558,000
+Total Missing ID Amount:           $3,309,883,153
+
+TOP 10 LARGEST DISCONTINUED ITEMS
+----------------------------------------
+1. DEPARTMENT OF HEALTH
+   ID: 26952 | Year: 2023
+   Amount: $16,944,850,000
+   Page: 1039, Line: 4
+
+2. DEPARTMENT OF HEALTH
+   ID: 26956 | Year: 2023
+   Amount: $14,780,889,000
+   Page: 1040, Line: 44
+
+3. DEPARTMENT OF HEALTH
+   ID: 26951 | Year: 2023
+   Amount: $11,593,787,000
+   Page: 1039, Line: 48
+
+4. DEPARTMENT OF HEALTH
+   ID: 26953 | Year: 2023
+   Amount: $8,279,648,000
+   Page: 1039, Line: 20
+
+5. DEPARTMENT OF HEALTH
+   ID: 26950 | Year: 2023
+   Amount: $6,668,971,000
+   Page: 1038, Line: 40
+
+6. DEPARTMENT OF HEALTH
+   ID: 26951 | Year: 2024
+   Amount: $6,081,827,000
+   Page: 1023, Line: 31
+
+7. DEPARTMENT OF HEALTH
+   ID: 26961 | Year: 2023
+   Amount: $5,924,894,000
+   Page: 1041, Line: 23
+
+8. DEPARTMENT OF HEALTH
+   ID: 26952 | Year: 2024
+   Amount: $5,658,755,000
+   Page: 1024, Line: 39
+
+9. DEPARTMENT OF HEALTH
+   ID: 29800 | Year: 2024
+   Amount: $4,420,389,000
+   Page: 1048, Line: 44
+
+10. DEPARTMENT OF MENTAL HYGIENE
+   ID: 37835 | Year: 2024
+   Amount: $3,853,648,000
+   Page: 1280, Line: 4
+
+
+DISCONTINUED BY AGENCY (TOP 15)
+----------------------------------------
+DEPARTMENT OF HEALTH
+  Items: 483 | Amount: $108,175,534,934
+
+EDUCATION DEPARTMENT
+  Items: 400 | Amount: $6,891,036,700
+
+DEPARTMENT OF MENTAL HYGIENE
+  Items: 185 | Amount: $4,909,623,400
+
+DEPARTMENT OF FAMILY ASSISTANCE
+  Items: 249 | Amount: $4,538,602,150
+
+DIVISION OF HOMELAND SECURITY AND EMERGENCY SERVICES
+  Items: 22 | Amount: $1,851,854,000
+
+MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES
+  Items: 26 | Amount: $1,023,425,034
+
+OFFICE OF INDIGENT LEGAL SERVICES
+  Items: 9 | Amount: $213,141,000
+
+DIVISION OF CRIMINAL JUSTICE SERVICES
+  Items: 206 | Amount: $106,869,480
+
+OFFICE FOR THE AGING
+  Items: 205 | Amount: $52,712,998
+
+HIGHER EDUCATION SERVICES CORPORATION
+  Items: 43 | Amount: $33,851,000
+
+DIVISION OF HOUSING AND COMMUNITY RENEWAL
+  Items: 11 | Amount: $33,501,000
+
+DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION
+  Items: 23 | Amount: $30,391,000
+
+DEPARTMENT OF AGRICULTURE AND MARKETS
+  Items: 123 | Amount: $24,522,500
+
+DEPARTMENT OF FINANCIAL SERVICES
+  Items: 5 | Amount: $20,854,000
+
+NEW YORK STATE URBAN DEVELOPMENT CORPORATION
+  Items: 53 | Amount: $12,346,000

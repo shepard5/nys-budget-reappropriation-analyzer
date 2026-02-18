@@ -1,0 +1,99 @@
+{
+  "generated_at": "2026-02-18T13:38:40.932725",
+  "totals": {
+    "enacted_records": 3517,
+    "executive_records": 3678,
+    "continued": 1366,
+    "modified": 1834,
+    "likely_reorganized": 3,
+    "discontinued": 307,
+    "missing_id": 7,
+    "continued_amount": 26008263038,
+    "modified_amount": 85611070159,
+    "likely_reorganized_amount": 0,
+    "discontinued_amount": 2108577200,
+    "missing_id_amount": 223829000
+  },
+  "by_agency": {
+    "NEW YORK STATE URBAN DEVELOPMENT CORPORATION": {
+      "count": 7,
+      "amount": 432616000
+    },
+    "DIVISION OF HOUSING AND COMMUNITY RENEWAL": {
+      "count": 15,
+      "amount": 370964000
+    },
+    "DEPARTMENT OF TRANSPORTATION": {
+      "count": 75,
+      "amount": 241951000
+    },
+    "MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES": {
+      "count": 6,
+      "amount": 241058000
+    },
+    "DEPARTMENT OF MOTOR VEHICLES": {
+      "count": 7,
+      "amount": 165886000
+    },
+    "DEPARTMENT OF HEALTH": {
+      "count": 11,
+      "amount": 139685000
+    },
+    "DEPARTMENT OF ENVIRONMENTAL CONSERVATION": {
+      "count": 58,
+      "amount": 126046000
+    },
+    "DEPARTMENT OF FAMILY ASSISTANCE": {
+      "count": 12,
+      "amount": 88709000
+    },
+    "DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISION": {
+      "count": 18,
+      "amount": 41742000
+    },
+    "DIVISION OF CRIMINAL JUSTICE SERVICES": {
+      "count": 1,
+      "amount": 40655000
+    },
+    "DEPARTMENT OF MENTAL HYGIENE": {
+      "count": 25,
+      "amount": 37491000
+    },
+    "METROPOLITAN TRANSPORTATION AUTHORITY": {
+      "count": 1,
+      "amount": 36000000
+    },
+    "OFFICE OF GENERAL SERVICES": {
+      "count": 8,
+      "amount": 30758000
+    },
+    "EDUCATION DEPARTMENT": {
+      "count": 14,
+      "amount": 30019200
+    },
+    "OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVATION": {
+      "count": 25,
+      "amount": 28490000
+    },
+    "ENERGY RESEARCH AND DEVELOPMENT AUTHORITY": {
+      "count": 1,
+      "amount": 24822000
+    },
+    "OLYMPIC REGIONAL DEVELOPMENT AUTHORITY": {
+      "count": 3,
+      "amount": 19492000
+    },
+    "DIVISION OF HOMELAND SECURITY AND EMERGENCY SERVICES": {
+      "count": 2,
+      "amount": 6000000
+    },
+    "DEPARTMENT OF STATE": {
+      "count": 1,
+      "amount": 1991000
+    },
+    "DEPARTMENT OF AGRICULTURE AND MARKETS": {
+      "count": 3,
+      "amount": 1638000
+    }
+  }
+}

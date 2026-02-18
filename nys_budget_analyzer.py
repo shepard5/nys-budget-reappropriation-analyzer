@@ -75,7 +75,12 @@ class BudgetRecord:
         under different account names between enacted and executive budgets.
         Appropriation amount IS included because the same ID can have multiple
         line items with different original amounts.
+
+        For MISSING_ID records, includes page_number and reappropriation_amount
+        to ensure uniqueness (they can't match on ID anyway).
         """
+        if self.appropriation_id == "MISSING_ID":
+            return f"{self._normalize(self.agency)}|MISSING_ID|{self.chapter_year}|{self.appropriation_amount}|{self.reappropriation_amount}|{self.page_number}"
         return f"{self._normalize(self.agency)}|{self.appropriation_id}|{self.chapter_year}|{self.appropriation_amount}"
 
     def _normalize(self, text: str) -> str:
@@ -148,9 +153,11 @@ class ParsingContext:
 class ComparisonResult:
     """Result of comparing enacted vs executive budgets."""
     enacted_record: BudgetRecord
-    status: str  # "discontinued", "continued", "modified"
+    status: str  # "discontinued", "continued", "modified", "likely_reorganized", "missing_id"
     executive_match: Optional[BudgetRecord] = None
     amount_difference: Optional[int] = None
+    match_pass: Optional[str] = None  # "exact", "drop_amount", "fuzzy_text", None
+    similarity_score: Optional[float] = None  # For fuzzy matches
 
 
 @dataclass
@@ -159,6 +166,8 @@ class ComparisonResults:
     discontinued: List[ComparisonResult] = field(default_factory=list)
     continued: List[ComparisonResult] = field(default_factory=list)
     modified: List[ComparisonResult] = field(default_factory=list)
+    likely_reorganized: List[ComparisonResult] = field(default_factory=list)
+    missing_id: List[ComparisonResult] = field(default_factory=list)
     all_enacted: List[BudgetRecord] = field(default_factory=list)
     all_executive: List[BudgetRecord] = field(default_factory=list)
 
@@ -649,10 +658,10 @@ class PDFExtractor:
             approp_amount = self._parse_amount(reapprop_match.group(1))
             reapprop_amount = self._parse_amount(reapprop_match.group(2))
 
-        # Find appropriation ID
+        # Find appropriation ID (keep record even if missing — flag it)
         approp_id = self._find_approp_id(full_text)
         if not approp_id:
-            return None  # Skip records without ID
+            approp_id = "MISSING_ID"
 
         # Find the line containing the amounts for raw_line
         raw_line = ""
@@ -946,7 +955,66 @@ class DeduplicationEngine:
 # =============================================================================
 
 class BudgetComparator:
-    """Compares enacted vs executive budgets to find discontinued items."""
+    """Compares enacted vs executive budgets to find discontinued items.
+
+    Uses three-pass matching with progressive relaxation:
+    - Pass 1 (Exact): agency|approp_id|chapter_year|approp_amount
+    - Pass 2 (Drop amount): agency|approp_id|chapter_year — catches funding level changes
+    - Pass 3 (Fuzzy text): agency|chapter_year + bill_language similarity — catches reorganizations
+    """
+
+    FUZZY_THRESHOLD = 0.75  # Minimum similarity score for fuzzy text match
+
+    @staticmethod
+    def _normalize_text_for_similarity(text: str) -> str:
+        """Normalize bill language for similarity comparison.
+
+        Strips line numbers, extra whitespace, punctuation noise, and common
+        boilerplate to focus on the substantive program description.
+        """
+        if not text:
+            return ""
+        # Remove line number prefixes (e.g., "1 ", "23 " at start of lines)
+        text = re.sub(r'(?m)^\d{1,2}\s+', '', text)
+        # Remove page headers and noise
+        text = re.sub(r'\d+-\d+-\d+', '', text)
+        # Collapse whitespace
+        text = re.sub(r'\s+', ' ', text)
+        # Remove dollar amounts (they change between years)
+        text = re.sub(r'\$?\d{1,3}(?:,\d{3})*(?:\.\d{2})?', '', text)
+        # Remove dots leaders
+        text = re.sub(r'\.{2,}', '', text)
+        # Remove (re. $...) markers
+        text = re.sub(r'\(re\.\s*\$[^)]*\)', '', text)
+        # Remove approp IDs in parens
+        text = re.sub(r'\(\d{5}\)', '', text)
+        # Lowercase and strip
+        text = text.lower().strip()
+        # Remove extra whitespace left over
+        text = re.sub(r'\s+', ' ', text)
+        return text
+
+    @staticmethod
+    def _text_similarity(text_a: str, text_b: str) -> float:
+        """Calculate similarity between two normalized text strings.
+
+        Uses token overlap (Jaccard-like) which is robust to word reordering
+        and minor wording changes. Returns 0.0 to 1.0.
+        """
+        if not text_a or not text_b:
+            return 0.0
+
+        # Tokenize into words (minimum 3 chars to skip noise)
+        tokens_a = set(w for w in text_a.split() if len(w) >= 3)
+        tokens_b = set(w for w in text_b.split() if len(w) >= 3)
+
+        if not tokens_a or not tokens_b:
+            return 0.0
+
+        intersection = tokens_a & tokens_b
+        union = tokens_a | tokens_b
+
+        return len(intersection) / len(union) if union else 0.0
 
     def compare(
         self,
@@ -959,58 +1027,164 @@ class BudgetComparator:
         Items from enacted budget should appear as reappropriations in executive.
         Missing items = discontinued spending authority.
 
-        Uses two-pass matching:
-        - Pass 1: Exact composite_key match (agency|approp_id|chapter_year|amount)
-        - Pass 2: Relaxed match dropping chapter_year (catches appropriation records
-          where chapter_year defaults to fiscal year prefix, which differs between budgets)
+        Three-pass matching:
+        - Pass 1 (Exact): agency|approp_id|chapter_year|approp_amount
+        - Pass 2 (Drop amount): agency|approp_id|chapter_year
+        - Pass 3 (Fuzzy text): agency|chapter_year + bill_language similarity >= threshold
+
+        MISSING_ID records bypass matching entirely and go to the missing_id bucket.
         """
         results = ComparisonResults()
         results.all_enacted = enacted_records
         results.all_executive = executive_records
 
-        # Pass 1: Build lookup from ALL executive records (not just reappropriations)
-        exec_by_key: Dict[str, BudgetRecord] = {}
+        # ---- Build executive lookups ----
+
+        # Pass 1 lookup: exact composite key
+        exec_by_exact: Dict[str, BudgetRecord] = {}
         for record in executive_records:
-            key = record.composite_key()
-            exec_by_key[key] = record
+            if record.appropriation_id != "MISSING_ID":
+                key = record.composite_key()
+                exec_by_exact[key] = record
 
-        # Pass 2: Build relaxed lookup (no chapter_year) for fallback matching
-        # Key: agency|appropriation_id|appropriation_amount
-        exec_by_relaxed: Dict[str, BudgetRecord] = {}
+        # Pass 2 lookup: agency|approp_id|chapter_year (drop amount)
+        exec_by_drop_amount: Dict[str, List[BudgetRecord]] = defaultdict(list)
         for record in executive_records:
-            relaxed = f"{record._normalize(record.agency)}|{record.appropriation_id}|{record.appropriation_amount}"
-            exec_by_relaxed[relaxed] = record
+            if record.appropriation_id != "MISSING_ID":
+                key = f"{record._normalize(record.agency)}|{record.appropriation_id}|{record.chapter_year}"
+                exec_by_drop_amount[key].append(record)
 
-        print(f"  Executive records: {len(exec_by_key)} (exact keys), {len(exec_by_relaxed)} (relaxed keys)")
+        # Pass 3 lookup: agency|chapter_year -> list of (normalized_text, record)
+        exec_by_agency_chapter: Dict[str, List[Tuple[str, BudgetRecord]]] = defaultdict(list)
+        for record in executive_records:
+            key = f"{record._normalize(record.agency)}|{record.chapter_year}"
+            norm_text = self._normalize_text_for_similarity(record.bill_language)
+            exec_by_agency_chapter[key].append((norm_text, record))
 
-        # Compare each enacted record against executive
+        print(f"  Executive lookups: {len(exec_by_exact)} exact keys, "
+              f"{len(exec_by_drop_amount)} drop-amount keys, "
+              f"{len(exec_by_agency_chapter)} agency|chapter groups")
+
+        # ---- Track which executive records have been claimed ----
+        claimed_exec_keys: Set[str] = set()
+
+        # ---- Separate MISSING_ID records up front ----
+        enacted_with_id = []
         for enacted in enacted_records:
+            if enacted.appropriation_id == "MISSING_ID":
+                results.missing_id.append(ComparisonResult(
+                    enacted_record=enacted,
+                    status='missing_id',
+                    match_pass=None
+                ))
+            else:
+                enacted_with_id.append(enacted)
+
+        # ---- Pass 1: Exact match ----
+        unmatched_after_p1 = []
+        for enacted in enacted_with_id:
             key = enacted.composite_key()
-            relaxed = f"{enacted._normalize(enacted.agency)}|{enacted.appropriation_id}|{enacted.appropriation_amount}"
+            exec_record = exec_by_exact.get(key)
 
-            # Try exact match first, then relaxed match
-            exec_record = exec_by_key.get(key) or exec_by_relaxed.get(relaxed)
-
-            if exec_record:
-                # Check if reappropriation amounts match
+            if exec_record and key not in claimed_exec_keys:
+                claimed_exec_keys.add(key)
                 if enacted.reappropriation_amount == exec_record.reappropriation_amount:
                     results.continued.append(ComparisonResult(
                         enacted_record=enacted,
                         status='continued',
-                        executive_match=exec_record
+                        executive_match=exec_record,
+                        match_pass='exact'
                     ))
                 else:
                     results.modified.append(ComparisonResult(
                         enacted_record=enacted,
                         status='modified',
                         executive_match=exec_record,
-                        amount_difference=exec_record.reappropriation_amount - enacted.reappropriation_amount
+                        amount_difference=exec_record.reappropriation_amount - enacted.reappropriation_amount,
+                        match_pass='exact'
                     ))
             else:
-                results.discontinued.append(ComparisonResult(
+                unmatched_after_p1.append(enacted)
+
+        print(f"  Pass 1 (exact): {len(enacted_with_id) - len(unmatched_after_p1)} matched, "
+              f"{len(unmatched_after_p1)} unmatched")
+
+        # ---- Pass 2: Drop amount (same ID + chapter, different amount) ----
+        unmatched_after_p2 = []
+        for enacted in unmatched_after_p1:
+            key = f"{enacted._normalize(enacted.agency)}|{enacted.appropriation_id}|{enacted.chapter_year}"
+            candidates = exec_by_drop_amount.get(key, [])
+
+            # Find best unclaimed candidate
+            best_match = None
+            for candidate in candidates:
+                cand_key = candidate.composite_key()
+                if cand_key not in claimed_exec_keys:
+                    best_match = candidate
+                    break
+
+            if best_match:
+                claimed_exec_keys.add(best_match.composite_key())
+                results.modified.append(ComparisonResult(
                     enacted_record=enacted,
-                    status='discontinued'
+                    status='modified',
+                    executive_match=best_match,
+                    amount_difference=best_match.reappropriation_amount - enacted.reappropriation_amount,
+                    match_pass='drop_amount'
                 ))
+            else:
+                unmatched_after_p2.append(enacted)
+
+        print(f"  Pass 2 (drop amount): {len(unmatched_after_p1) - len(unmatched_after_p2)} matched, "
+              f"{len(unmatched_after_p2)} unmatched")
+
+        # ---- Pass 3: Fuzzy text match (same agency + chapter, similar bill language) ----
+        unmatched_after_p3 = []
+        fuzzy_matched = 0
+        for enacted in unmatched_after_p2:
+            agency_chapter_key = f"{enacted._normalize(enacted.agency)}|{enacted.chapter_year}"
+            candidates = exec_by_agency_chapter.get(agency_chapter_key, [])
+
+            enacted_norm = self._normalize_text_for_similarity(enacted.bill_language)
+
+            best_score = 0.0
+            best_candidate = None
+            for cand_text, cand_record in candidates:
+                cand_exact_key = cand_record.composite_key()
+                if cand_exact_key in claimed_exec_keys:
+                    continue
+                score = self._text_similarity(enacted_norm, cand_text)
+                if score > best_score:
+                    best_score = score
+                    best_candidate = cand_record
+
+            if best_candidate and best_score >= self.FUZZY_THRESHOLD:
+                claimed_exec_keys.add(best_candidate.composite_key())
+                results.likely_reorganized.append(ComparisonResult(
+                    enacted_record=enacted,
+                    status='likely_reorganized',
+                    executive_match=best_candidate,
+                    amount_difference=best_candidate.reappropriation_amount - enacted.reappropriation_amount,
+                    match_pass='fuzzy_text',
+                    similarity_score=best_score
+                ))
+                fuzzy_matched += 1
+            else:
+                unmatched_after_p3.append(enacted)
+
+        print(f"  Pass 3 (fuzzy text): {fuzzy_matched} matched, "
+              f"{len(unmatched_after_p3)} unmatched")
+
+        # ---- Everything left is discontinued ----
+        for enacted in unmatched_after_p3:
+            results.discontinued.append(ComparisonResult(
+                enacted_record=enacted,
+                status='discontinued'
+            ))
+
+        # ---- Summary ----
+        print(f"  MISSING_ID (no approp ID): {len(results.missing_id)}")
+        print(f"  Final discontinued: {len(results.discontinued)}")
 
         return results
 
@@ -1073,6 +1247,16 @@ class ReportGenerator:
             disc_approps, 'discontinued_appropriations.csv'
         )
 
+        # Likely reorganized (fuzzy text matches — needs manual review)
+        outputs['likely_reorganized'] = self._write_discontinued_csv(
+            results.likely_reorganized, 'likely_reorganized.csv'
+        )
+
+        # Missing ID records (extracted but had no approp ID)
+        outputs['missing_id'] = self._write_discontinued_csv(
+            results.missing_id, 'missing_id_records.csv'
+        )
+
         # Raw data exports
         outputs['enacted_data'] = self._write_records_csv(
             results.all_enacted, 'enacted_budget_data.csv'
@@ -1096,7 +1280,10 @@ class ReportGenerator:
         rows = []
         for result in discontinued:
             r = result.enacted_record
-            rows.append({
+            row = {
+                'status': result.status,
+                'match_pass': result.match_pass or '',
+                'similarity_score': f"{result.similarity_score:.3f}" if result.similarity_score else '',
                 'agency': r.agency,
                 'budget_type': r.budget_type,
                 'fund_type': r.fund_type,
@@ -1110,8 +1297,18 @@ class ReportGenerator:
                 'line_number': r.line_number,
                 'fiscal_year': r.fiscal_year,
                 'source_file': r.source_file,
-                'composite_key': r.composite_key()
-            })
+                'composite_key': r.composite_key(),
+            }
+            # Add executive match info for reorganized/modified matches
+            if result.executive_match:
+                em = result.executive_match
+                row['exec_match_approp_id'] = em.appropriation_id
+                row['exec_match_chapter_year'] = em.chapter_year
+                row['exec_match_approp_amount'] = em.appropriation_amount
+                row['exec_match_reapprop_amount'] = em.reappropriation_amount
+                row['exec_match_bill_language'] = em.bill_language
+                row['amount_difference'] = result.amount_difference or 0
+            rows.append(row)
 
         df = pd.DataFrame(rows)
         df.to_csv(path, index=False)
@@ -1154,6 +1351,12 @@ class ReportGenerator:
                                   for r in results.discontinued)
         continued_total = sum(r.enacted_record.reappropriation_amount
                                for r in results.continued)
+        modified_total = sum(r.enacted_record.reappropriation_amount
+                              for r in results.modified)
+        reorganized_total = sum(r.enacted_record.reappropriation_amount
+                                 for r in results.likely_reorganized)
+        missing_id_total = sum(r.enacted_record.reappropriation_amount
+                                for r in results.missing_id)
 
         # Group by agency
         agency_totals = defaultdict(lambda: {'count': 0, 'amount': 0})
@@ -1167,11 +1370,16 @@ class ReportGenerator:
             'totals': {
                 'enacted_records': len(results.all_enacted),
                 'executive_records': len(results.all_executive),
-                'discontinued': len(results.discontinued),
                 'continued': len(results.continued),
                 'modified': len(results.modified),
+                'likely_reorganized': len(results.likely_reorganized),
+                'discontinued': len(results.discontinued),
+                'missing_id': len(results.missing_id),
+                'continued_amount': continued_total,
+                'modified_amount': modified_total,
+                'likely_reorganized_amount': reorganized_total,
                 'discontinued_amount': discontinued_total,
-                'continued_amount': continued_total
+                'missing_id_amount': missing_id_total
             },
             'by_agency': dict(sorted(
                 agency_totals.items(),
@@ -1198,26 +1406,50 @@ class ReportGenerator:
             "EXTRACTION SUMMARY",
             "-" * 40,
             f"Enacted Records Extracted: {len(results.all_enacted):,}",
+            f"  (of which {sum(1 for r in results.all_enacted if r.appropriation_id == 'MISSING_ID')} have no approp ID)",
             f"Executive Records Extracted: {len(results.all_executive):,}",
             "",
-            "COMPARISON RESULTS",
+            "COMPARISON RESULTS (3-Pass Matching)",
             "-" * 40,
-            f"Discontinued (Missing in Executive): {len(results.discontinued):,}",
-            f"Continued (Present in Both): {len(results.continued):,}",
-            f"Modified (Amount Changed): {len(results.modified):,}",
+            f"Continued (Exact match, same amounts): {len(results.continued):,}",
+            f"Modified (ID matched, amount changed):  {len(results.modified):,}",
+            f"Likely Reorganized (Fuzzy text match):  {len(results.likely_reorganized):,}",
+            f"Discontinued (No match found):          {len(results.discontinued):,}",
+            f"Missing ID (No approp ID extracted):    {len(results.missing_id):,}",
+            "",
+            "MATCH PASS BREAKDOWN",
+            "-" * 40,
+        ]
+
+        # Count by match pass
+        pass_counts = defaultdict(int)
+        for bucket in [results.continued, results.modified, results.likely_reorganized]:
+            for r in bucket:
+                if r.match_pass:
+                    pass_counts[r.match_pass] += 1
+        lines.extend([
+            f"  Pass 1 (exact key):    {pass_counts.get('exact', 0):,}",
+            f"  Pass 2 (drop amount):  {pass_counts.get('drop_amount', 0):,}",
+            f"  Pass 3 (fuzzy text):   {pass_counts.get('fuzzy_text', 0):,}",
             "",
             "FINANCIAL SUMMARY",
             "-" * 40,
-        ]
+        ])
 
         discontinued_total = sum(r.enacted_record.reappropriation_amount
                                   for r in results.discontinued)
         continued_total = sum(r.enacted_record.reappropriation_amount
                                for r in results.continued)
+        reorganized_total = sum(r.enacted_record.reappropriation_amount
+                                 for r in results.likely_reorganized)
+        missing_id_total = sum(r.enacted_record.reappropriation_amount
+                                for r in results.missing_id)
 
         lines.extend([
-            f"Total Discontinued Amount: ${discontinued_total:,.0f}",
-            f"Total Continued Amount: ${continued_total:,.0f}",
+            f"Total Discontinued Amount:        ${discontinued_total:,.0f}",
+            f"Total Continued Amount:            ${continued_total:,.0f}",
+            f"Total Likely Reorganized Amount:   ${reorganized_total:,.0f}",
+            f"Total Missing ID Amount:           ${missing_id_total:,.0f}",
             "",
             "TOP 10 LARGEST DISCONTINUED ITEMS",
             "-" * 40,
@@ -1366,12 +1598,14 @@ class NYSBudgetAnalyzer:
         if enacted_budgetary or executive_budgetary:
             print(f"  (Filtered {len(enacted_budgetary)} enacted / {len(executive_budgetary)} executive budgetary sub-lines)")
 
-        # Step 4: Compare budgets
-        print("\n[4/5] Comparing budgets...")
+        # Step 4: Compare budgets (3-pass matching)
+        print("\n[4/5] Comparing budgets (3-pass matching)...")
         results = self.comparator.compare(enacted_deduped, executive_deduped)
-        print(f"  Discontinued: {len(results.discontinued):,}")
-        print(f"  Continued: {len(results.continued):,}")
-        print(f"  Modified: {len(results.modified):,}")
+        print(f"  Continued:          {len(results.continued):,}")
+        print(f"  Modified:           {len(results.modified):,}")
+        print(f"  Likely Reorganized: {len(results.likely_reorganized):,}")
+        print(f"  Discontinued:       {len(results.discontinued):,}")
+        print(f"  Missing ID:         {len(results.missing_id):,}")
 
         # Step 5: Generate reports
         print("\n[5/5] Generating reports...")
@@ -1386,7 +1620,13 @@ class NYSBudgetAnalyzer:
 
         discontinued_total = sum(r.enacted_record.reappropriation_amount
                                   for r in results.discontinued)
+        reorganized_total = sum(r.enacted_record.reappropriation_amount
+                                 for r in results.likely_reorganized)
+        missing_id_total = sum(r.enacted_record.reappropriation_amount
+                                for r in results.missing_id)
         print(f"\nDiscontinued spending authority: ${discontinued_total:,.0f}")
+        print(f"Likely reorganized (needs review): ${reorganized_total:,.0f}")
+        print(f"Missing approp ID (needs review):  ${missing_id_total:,.0f}")
         print(f"Affecting {len(set(r.enacted_record.agency for r in results.discontinued))} agencies")
 
         return results

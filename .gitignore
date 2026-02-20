@@ -1,52 +1,28 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
 # Virtual environments
 venv/
-ENV/
 env/
 
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
 
 # OS
 .DS_Store
-Thumbs.db
 
 # PDF files (too large for git)
 *.pdf
 
-# Temporary files
-*.tmp
-*.log
-
-# Generated output directories — only v7 is current
+# All generated output (re-run analyzer to regenerate)
 **/output_*/
-!**/output_stateops_v7/
-!**/output_atl_v7/
-!**/output_capital_v7/
+
+# Generated/matched data files
+*_matched.xlsx
 
 # Test output
 full_test_output/
@@ -55,14 +31,13 @@ test_output/
 # Claude Code local settings
 .claude/
 
-# Data archives and old working directories
-*.zip
+# Local working directories (not in scope)
 2024-25/
 2025-26 Education Reapprops/
 25-26 ATL Reapprop Inserts and Sections/
-Reapprops Guide - UPDATED.pdf
-
-# Old script versions and stale docs
-nys_budget_analyzer_v1_reapprops_only.py
 nys_budget_analyzer_v4/
+
+# Old files (removed)
 VALIDATION_REPORT.md
+nys_budget_analyzer_v1_reapprops_only.py
+Reapprops Guide - UPDATED.pdf

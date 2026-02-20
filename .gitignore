@@ -42,27 +42,25 @@ Thumbs.db
 *.tmp
 *.log
 
-# Generated output directories (analysis artifacts — except v5 production output)
+# Generated output directories — only v7 is current
 **/output_*/
-!**/output_stateops_v5/
-!**/output_atl_v5/
-!**/output_capital_v5/
-!**/output_stateops_v6/
-!**/output_atl_v6/
-!**/output_capital_v6/
 !**/output_stateops_v7/
 !**/output_atl_v7/
 !**/output_capital_v7/
+
+# Test output
 full_test_output/
 test_output/
 
 # Claude Code local settings
 .claude/
 
-# Data archives and old analysis directories
+# Data archives and old working directories
 *.zip
 2024-25/
 2025-26 Education Reapprops/
+25-26 ATL Reapprop Inserts and Sections/
+Reapprops Guide - UPDATED.pdf
 
 # Old script versions and stale docs
 nys_budget_analyzer_v1_reapprops_only.py

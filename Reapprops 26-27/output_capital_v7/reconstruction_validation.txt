@@ -1,0 +1,121 @@
+================================================================================
+BUDGET RECONSTRUCTION VALIDATION
+Generated: 2026-02-18 17:13:11
+================================================================================
+
+CONCEPT
+----------------------------------------
+Round-trip proof: reconstruct the enacted 25-26 reappropriation section
+from executive 26-27 data + our discontinued/missing_id lists, then
+compare against the actual enacted reappropriations.
+
+  reconstructed = exec_reapprops(chyr<=2024) + discontinued + missing_id
+
+SUMMARY
+----------------------------------------
+Enacted reappropriations (ground truth):  3,240
+Reconstructed reappropriations:            3,360
+
+Exact key matches:                         2,696
+Relaxed matches (agency|id|chyr):           544
+Total matched:                             3,240
+
+Missing from reconstruction:               0
+Extra in reconstruction:                    118
+
+COVERAGE: 100.0%
+
+PER-AGENCY BREAKDOWN
+----------------------------------------
+Agency                                              Enacted  Matched  Missing    Extra   Cov%
+------------------------------------------------------------------------------------------
+DEPARTMENT OF TRANSPORTATION                           1032     1032        0        0 100.0%
+DEPARTMENT OF ENVIRONMENTAL CONSERVATION                653      653        0      101 100.0%
+DEPARTMENT OF MENTAL HYGIENE                            252      252        0        0 100.0%
+NEW YORK STATE URBAN DEVELOPMENT CORPORATION            139      139        0        6 100.0%
+OFFICE OF PARKS, RECREATION AND HISTORIC PRESERVAT      126      126        0        0 100.0%
+STATE UNIVERSITY OF NEW YORK                            121      121        0        0 100.0%
+DEPARTMENT OF FAMILY ASSISTANCE                         118      118        0        0 100.0%
+DEPARTMENT OF CORRECTIONS AND COMMUNITY SUPERVISIO       82       82        0        0 100.0%
+OFFICE OF GENERAL SERVICES                               81       81        0        0 100.0%
+DIVISION OF HOUSING AND COMMUNITY RENEWAL                81       81        0        1 100.0%
+CITY UNIVERSITY OF NEW YORK                              78       78        0        0 100.0%
+EDUCATION DEPARTMENT                                     77       77        0        2 100.0%
+MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIE       73       73        0        6 100.0%
+DIVISION OF MILITARY AND NAVAL AFFAIRS                   62       62        0        0 100.0%
+DEPARTMENT OF HEALTH                                     60       60        0        0 100.0%
+DEPARTMENT OF AGRICULTURE AND MARKETS                    59       59        0        0 100.0%
+DIVISION OF STATE POLICE                                 32       32        0        0 100.0%
+DIVISION OF HOMELAND SECURITY AND EMERGENCY SERVIC       19       19        0        0 100.0%
+DEPARTMENT OF MOTOR VEHICLES                             16       16        0        0 100.0%
+DEPARTMENT OF STATE                                      11       11        0        1 100.0%
+DIVISION OF CRIMINAL JUSTICE SERVICES                    10       10        0        1 100.0%
+OFFICE OF INFORMATION TECHNOLOGY SERVICES                 9        9        0        0 100.0%
+METROPOLITAN TRANSPORTATION AUTHORITY                     8        8        0        0 100.0%
+OFFICE OF VICTIM SERVICES                                 6        6        0        0 100.0%
+ADIRONDACK PARK AGENCY                                    5        5        0        0 100.0%
+STATE BOARD OF ELECTIONS                                  5        5        0        0 100.0%
+OLYMPIC REGIONAL DEVELOPMENT AUTHORITY                    5        5        0        0 100.0%
+NEW YORK POWER AUTHORITY                                  5        5        0        0 100.0%
+DEPARTMENT OF LAW                                         4        4        0        0 100.0%
+DEPARTMENT OF AUDIT AND CONTROL                           3        3        0        0 100.0%
+ENERGY RESEARCH AND DEVELOPMENT AUTHORITY                 3        3        0        0 100.0%
+HUDSON RIVER PARK TRUST                                   2        2        0        0 100.0%
+COUNCIL ON THE ARTS                                       1        1        0        0 100.0%
+DEPARTMENT OF FINANCIAL SERVICES                          1        1        0        0 100.0%
+PUBLIC EMPLOYMENT RELATIONS BOARD                         1        1        0        0 100.0%
+
+
+EXTRA IN RECONSTRUCTION (118)
+----------------------------------------
+  MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES | ID: 85104 | chyr: 2022 | amt: $164,576,000 | acct: IRA Elective Pay Federal Capital Account - 32233 | src: executive | pg: 1046
+  NEW YORK STATE URBAN DEVELOPMENT CORPORATION | ID: 58021 | chyr: 2023 | amt: $130,000,000 | acct: Transportation Infrastructure Renewal Bond Fund Account - 30660 | src: executive | pg: 992
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2024 | amt: $65,062,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 302
+  NEW YORK STATE URBAN DEVELOPMENT CORPORATION | ID: 47349 | chyr: 2006 | amt: $53,249,000 | acct: Infrastructure Investment Account - 33050 | src: executive | pg: 1012
+  DEPARTMENT OF STATE | ID: 51275 | chyr: 2017 | amt: $42,717,000 | acct: Infrastructure Investment Account - 33050 | src: executive | pg: 594
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2023 | amt: $38,969,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 303
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2022 | amt: $37,366,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 303
+  MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES | ID: 80595 | chyr: 2005 | amt: $36,251,000 | acct: WCB IT Business Process Design Account - 32218 | src: executive | pg: 1038
+  NEW YORK STATE URBAN DEVELOPMENT CORPORATION | ID: 58027 | chyr: 2023 | amt: $29,553,000 | acct: Transportation Infrastructure Renewal Bond Fund Account - 30660 | src: executive | pg: 992
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2021 | amt: $27,838,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 303
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24873 | chyr: 2016 | amt: $26,705,000 | acct: ENCON Federal Capital Account - 31364 | src: executive | pg: 316
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24873 | chyr: 2018 | amt: $22,825,000 | acct: ENCON Federal Capital Account - 31364 | src: executive | pg: 316
+  DIVISION OF CRIMINAL JUSTICE SERVICES | ID: 60175 | chyr: 2022 | amt: $21,391,000 | acct: DOCS Rehabilitation Projects Account - 32352 | src: executive | pg: 116
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24868 | chyr: 2024 | amt: $20,000,000 | acct: Pure Waters Bond Fund Account - 30620 | src: executive | pg: 296
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24868 | chyr: 2023 | amt: $20,000,000 | acct: Pure Waters Bond Fund Account - 30620 | src: executive | pg: 297
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24868 | chyr: 2022 | amt: $20,000,000 | acct: Pure Waters Bond Fund Account - 30620 | src: executive | pg: 297
+  NEW YORK STATE URBAN DEVELOPMENT CORPORATION | ID: 58023 | chyr: 2023 | amt: $19,000,000 | acct: Transportation Infrastructure Renewal Bond Fund Account - 30660 | src: executive | pg: 992
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 25720 | chyr: 2024 | amt: $18,099,000 | acct: ENCON Federal Capital Account - 31364 | src: executive | pg: 315
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 81096 | chyr: 2006 | amt: $15,000,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 311
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 81096 | chyr: 2005 | amt: $15,000,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 311
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24868 | chyr: 2021 | amt: $13,842,000 | acct: Pure Waters Bond Fund Account - 30620 | src: executive | pg: 298
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24870 | chyr: 1994 | amt: $11,785,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 313
+  MISCELLANEOUS -- ALL STATE DEPARTMENTS AND AGENCIES | ID: 80589 | chyr: 2000 | amt: $11,740,000 | acct: Infrastructure Investment Account - 33050 | src: executive | pg: 1078
+  DIVISION OF HOUSING AND COMMUNITY RENEWAL | ID: 31414 | chyr: 2024 | amt: $10,100,000 | acct: Federal Capital Projects Account - 31350 | src: executive | pg: 437
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24868 | chyr: 2020 | amt: $9,981,000 | acct: Pure Waters Bond Fund Account - 30620 | src: executive | pg: 298
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2018 | amt: $8,385,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 304
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 81096 | chyr: 2003 | amt: $8,371,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 312
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24881 | chyr: 2024 | amt: $7,944,000 | acct: ENCON Federal Capital Account - 31364 | src: executive | pg: 317
+  EDUCATION DEPARTMENT | ID: MISSING_ID | chyr: 2019 | amt: $7,583,000 | acct: Office of the Professions Electronic Licensing Account - 32222 | src: executive | pg: 130
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2017 | amt: $7,577,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 304
+  NEW YORK STATE URBAN DEVELOPMENT CORPORATION | ID: 58024 | chyr: 2023 | amt: $7,500,000 | acct: Transportation Infrastructure Renewal Bond Fund Account - 30660 | src: executive | pg: 992
+  NEW YORK STATE URBAN DEVELOPMENT CORPORATION | ID: 58025 | chyr: 2023 | amt: $7,500,000 | acct: Transportation Infrastructure Renewal Bond Fund Account - 30660 | src: executive | pg: 992
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2019 | amt: $7,149,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 304
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 81096 | chyr: 2004 | amt: $6,340,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 311
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 25720 | chyr: 2023 | amt: $6,297,000 | acct: ENCON Federal Capital Account - 31364 | src: executive | pg: 315
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24867 | chyr: 2011 | amt: $5,564,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 309
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24700 | chyr: 2011 | amt: $5,500,000 | acct: Recreation and Historic Preservation Account - 30453 | src: executive | pg: 246
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24867 | chyr: 2010 | amt: $5,414,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 310
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24887 | chyr: 2024 | amt: $5,000,000 | acct: ENCON Federal Capital Account - 31364 | src: executive | pg: 317
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24867 | chyr: 2022 | amt: $4,500,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 308
+  EDUCATION DEPARTMENT | ID: 23456 | chyr: 2002 | amt: $4,410,000 | acct: DOCS Rehabilitation Projects Account - 32352 | src: executive | pg: 123
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24867 | chyr: 2012 | amt: $4,405,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 309
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24863 | chyr: 2020 | amt: $4,089,000 | acct: Hazardous Waste Cleanup Account - 31506 | src: executive | pg: 303
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 25730 | chyr: 2022 | amt: $4,000,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 314
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 25730 | chyr: 2021 | amt: $4,000,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 314
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24868 | chyr: 2017 | amt: $3,935,000 | acct: Pure Waters Bond Fund Account - 30620 | src: executive | pg: 299
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 25730 | chyr: 2023 | amt: $3,801,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 314
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24867 | chyr: 2023 | amt: $3,587,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 308
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24867 | chyr: 2009 | amt: $3,462,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 310
+  DEPARTMENT OF ENVIRONMENTAL CONSERVATION | ID: 24867 | chyr: 2007 | amt: $3,417,000 | acct: Hazardous Waste Remediation Oversight and Assistance Account - 31505 | src: executive | pg: 310
+  ... and 68 more (see CSV)

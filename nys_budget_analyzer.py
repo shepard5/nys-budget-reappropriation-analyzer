@@ -186,6 +186,24 @@ class BudgetaryComparisonResults:
     all_executive: List[BudgetaryAccountRecord] = field(default_factory=list)
 
 
+@dataclass
+class ReconstructionReport:
+    """Results of round-trip reconstruction validation.
+
+    Tests extraction accuracy by reconstructing the enacted 25-26 reappropriation
+    section from executive 26-27 data + our discontinued/missing_id lists, then
+    comparing against the actual enacted reappropriations.
+    """
+    enacted_reapprops: int
+    reconstructed_reapprops: int
+    exact_matches: int
+    relaxed_matches: int  # Same agency|id|chyr but different amount/account
+    missing_from_reconstruction: List[BudgetRecord] = field(default_factory=list)
+    extra_in_reconstruction: List[BudgetRecord] = field(default_factory=list)
+    coverage_pct: float = 0.0
+    per_agency: Dict[str, dict] = field(default_factory=dict)  # agency → {enacted, matched, missing, extra}
+
+
 # =============================================================================
 # REGEX PATTERNS
 # =============================================================================
@@ -1379,6 +1397,301 @@ class BudgetComparator:
 
         return results
 
+    def reconstruct_and_validate(self, results: ComparisonResults) -> ReconstructionReport:
+        """Round-trip reconstruction validation.
+
+        Reconstructs the enacted 25-26 reappropriation section from:
+          1. Executive reappropriations with chyr <= 2024 (carry-forwards the exec kept)
+          2. Enacted records from our discontinued list (items the exec dropped)
+          3. Enacted records from our missing_id list (items we couldn't match)
+
+        Then compares the reconstruction against the actual enacted reappropriations.
+        High coverage = our extraction and matching are correct.
+        """
+        # --- Build the enacted reappropriation set (ground truth) ---
+        enacted_reapprops = [
+            r for r in results.all_enacted
+            if r.reappropriation_amount > 0
+        ]
+
+        # --- Build the reconstructed set ---
+        # Component 1: Executive reappropriations with chyr <= 2024
+        # These are the carry-forwards the executive kept from 25-26
+        exec_kept = [
+            r for r in results.all_executive
+            if r.record_type == 'reappropriation'
+            and r.chapter_year.isdigit()
+            and int(r.chapter_year) <= 2024
+        ]
+
+        # Component 2: Enacted records from discontinued (items exec dropped)
+        disc_enacted = [
+            cr.enacted_record for cr in results.discontinued
+            if cr.enacted_record.reappropriation_amount > 0
+        ]
+
+        # Component 3: Enacted records from missing_id (couldn't match)
+        missing_enacted = [
+            cr.enacted_record for cr in results.missing_id
+            if cr.enacted_record.reappropriation_amount > 0
+        ]
+
+        reconstructed = exec_kept + disc_enacted + missing_enacted
+
+        # --- Match reconstruction against enacted ---
+        # Build lookup for reconstructed set by composite key
+        recon_by_full: Dict[str, List[BudgetRecord]] = defaultdict(list)
+        for r in reconstructed:
+            recon_by_full[r.composite_key()].append(r)
+
+        # Build relaxed key lookup (agency|id|chyr)
+        recon_by_relaxed: Dict[str, List[BudgetRecord]] = defaultdict(list)
+        for r in reconstructed:
+            if r.appropriation_id != "MISSING_ID":
+                key = f"{r._normalize(r.agency)}|{r.appropriation_id}|{r.chapter_year}"
+                recon_by_relaxed[key].append(r)
+
+        exact_matches = 0
+        relaxed_matches = 0
+        missing_from_recon = []
+        claimed_recon_keys: Set[str] = set()
+
+        for enacted in enacted_reapprops:
+            ck = enacted.composite_key()
+
+            # Try exact match first
+            candidates = recon_by_full.get(ck, [])
+            matched = False
+            for cand in candidates:
+                cand_ck = cand.composite_key()
+                if cand_ck not in claimed_recon_keys:
+                    claimed_recon_keys.add(cand_ck)
+                    exact_matches += 1
+                    matched = True
+                    break
+
+            if matched:
+                continue
+
+            # Try relaxed match (agency|id|chyr)
+            if enacted.appropriation_id != "MISSING_ID":
+                rk = f"{enacted._normalize(enacted.agency)}|{enacted.appropriation_id}|{enacted.chapter_year}"
+                candidates = recon_by_relaxed.get(rk, [])
+                for cand in candidates:
+                    cand_ck = cand.composite_key()
+                    if cand_ck not in claimed_recon_keys:
+                        claimed_recon_keys.add(cand_ck)
+                        relaxed_matches += 1
+                        matched = True
+                        break
+
+            if not matched:
+                missing_from_recon.append(enacted)
+
+        # Find extras: reconstructed items with no enacted counterpart
+        enacted_by_full: Dict[str, List[BudgetRecord]] = defaultdict(list)
+        for r in enacted_reapprops:
+            enacted_by_full[r.composite_key()].append(r)
+
+        enacted_by_relaxed: Dict[str, List[BudgetRecord]] = defaultdict(list)
+        for r in enacted_reapprops:
+            if r.appropriation_id != "MISSING_ID":
+                key = f"{r._normalize(r.agency)}|{r.appropriation_id}|{r.chapter_year}"
+                enacted_by_relaxed[key].append(r)
+
+        extra_in_recon = []
+        for r in reconstructed:
+            ck = r.composite_key()
+            # Check exact
+            if enacted_by_full.get(ck):
+                continue
+            # Check relaxed
+            if r.appropriation_id != "MISSING_ID":
+                rk = f"{r._normalize(r.agency)}|{r.appropriation_id}|{r.chapter_year}"
+                if enacted_by_relaxed.get(rk):
+                    continue
+            extra_in_recon.append(r)
+
+        total_matched = exact_matches + relaxed_matches
+        coverage = (total_matched / len(enacted_reapprops) * 100) if enacted_reapprops else 0.0
+
+        # --- Per-agency breakdown ---
+        per_agency: Dict[str, dict] = {}
+        # Count enacted by agency
+        for r in enacted_reapprops:
+            ag = r.agency
+            if ag not in per_agency:
+                per_agency[ag] = {'enacted': 0, 'matched': 0, 'missing': 0, 'extra': 0}
+            per_agency[ag]['enacted'] += 1
+
+        # Count missing by agency
+        for r in missing_from_recon:
+            ag = r.agency
+            if ag not in per_agency:
+                per_agency[ag] = {'enacted': 0, 'matched': 0, 'missing': 0, 'extra': 0}
+            per_agency[ag]['missing'] += 1
+
+        # Count extra by agency
+        for r in extra_in_recon:
+            ag = r.agency
+            if ag not in per_agency:
+                per_agency[ag] = {'enacted': 0, 'matched': 0, 'missing': 0, 'extra': 0}
+            per_agency[ag]['extra'] += 1
+
+        # Derive matched = enacted - missing
+        for ag, data in per_agency.items():
+            data['matched'] = data['enacted'] - data['missing']
+
+        return ReconstructionReport(
+            enacted_reapprops=len(enacted_reapprops),
+            reconstructed_reapprops=len(reconstructed),
+            exact_matches=exact_matches,
+            relaxed_matches=relaxed_matches,
+            missing_from_reconstruction=missing_from_recon,
+            extra_in_reconstruction=extra_in_recon,
+            coverage_pct=coverage,
+            per_agency=per_agency,
+        )
+
+    def compute_insertion_locations(self, results: ComparisonResults) -> List[dict]:
+        """Compute estimated insertion locations for discontinued items in the executive PDF.
+
+        For each discontinued enacted record, finds the nearest enacted neighbors
+        (predecessor/successor in document order) that survived into the executive,
+        and uses their executive page/line positions as anchors.
+        """
+        # Build map: enacted composite_key → executive (page, line) for all matched records
+        enacted_to_exec_pos: Dict[str, Tuple[int, Optional[int]]] = {}
+        enacted_to_exec_id: Dict[str, str] = {}
+        for bucket in [results.continued, results.modified, results.likely_reorganized]:
+            for cr in bucket:
+                ck = cr.enacted_record.composite_key()
+                if cr.executive_match:
+                    enacted_to_exec_pos[ck] = (
+                        cr.executive_match.page_number,
+                        cr.executive_match.line_number,
+                    )
+                    enacted_to_exec_id[ck] = cr.executive_match.appropriation_id
+
+        # Group ALL enacted records by agency, sorted by document order
+        agency_enacted: Dict[str, List[BudgetRecord]] = defaultdict(list)
+        for r in results.all_enacted:
+            agency_enacted[r.agency].append(r)
+        for agency in agency_enacted:
+            agency_enacted[agency].sort(key=lambda r: (r.page_number, r.line_number or 0))
+
+        # For each agency, build an ordered list of (record, has_exec_pos)
+        # so we can quickly find predecessor/successor anchors
+        agency_anchor_index: Dict[str, List[Tuple[BudgetRecord, bool]]] = {}
+        for agency, records in agency_enacted.items():
+            indexed = []
+            for r in records:
+                ck = r.composite_key()
+                has_pos = ck in enacted_to_exec_pos
+                indexed.append((r, has_pos))
+            agency_anchor_index[agency] = indexed
+
+        # Also compute per-agency executive page range as fallback
+        agency_exec_pages: Dict[str, Tuple[int, int]] = {}  # agency → (min_page, max_page)
+        for ck, (pg, ln) in enacted_to_exec_pos.items():
+            # Find the agency for this key from the enacted records
+            pass
+        # Build from executive records directly
+        for r in results.all_executive:
+            ag = r.agency
+            if ag not in agency_exec_pages:
+                agency_exec_pages[ag] = (r.page_number, r.page_number)
+            else:
+                mn, mx = agency_exec_pages[ag]
+                agency_exec_pages[ag] = (min(mn, r.page_number), max(mx, r.page_number))
+
+        # Compute insertion location for each discontinued item
+        rows = []
+        for cr in results.discontinued:
+            enacted = cr.enacted_record
+            agency = enacted.agency
+            enacted_ck = enacted.composite_key()
+
+            # Find position of this record in agency's ordered list
+            agency_list = agency_anchor_index.get(agency, [])
+            idx = None
+            for i, (r, _) in enumerate(agency_list):
+                if r.composite_key() == enacted_ck:
+                    idx = i
+                    break
+
+            pred_page = pred_line = pred_id = None
+            succ_page = succ_line = succ_id = None
+
+            if idx is not None:
+                # Search backward for predecessor with exec position
+                for j in range(idx - 1, -1, -1):
+                    r, has_pos = agency_list[j]
+                    if has_pos:
+                        ck = r.composite_key()
+                        pred_page, pred_line = enacted_to_exec_pos[ck]
+                        pred_id = enacted_to_exec_id.get(ck, r.appropriation_id)
+                        break
+
+                # Search forward for successor with exec position
+                for j in range(idx + 1, len(agency_list)):
+                    r, has_pos = agency_list[j]
+                    if has_pos:
+                        ck = r.composite_key()
+                        succ_page, succ_line = enacted_to_exec_pos[ck]
+                        succ_id = enacted_to_exec_id.get(ck, r.appropriation_id)
+                        break
+
+            # Determine estimated location
+            if pred_page is not None and succ_page is not None:
+                # Both anchors — use successor's position (insert just before it)
+                est_page = succ_page
+                est_line = succ_line
+                anchor_method = 'both'
+            elif succ_page is not None:
+                est_page = succ_page
+                est_line = succ_line
+                anchor_method = 'successor'
+            elif pred_page is not None:
+                est_page = pred_page
+                est_line = (pred_line + 1) if pred_line else None
+                anchor_method = 'predecessor'
+            else:
+                # No anchors — fall back to agency's exec page range
+                fallback = agency_exec_pages.get(agency)
+                if fallback:
+                    est_page = fallback[0]
+                    est_line = None
+                else:
+                    est_page = None
+                    est_line = None
+                anchor_method = 'agency_fallback'
+
+            rows.append({
+                'agency': enacted.agency,
+                'budget_type': enacted.budget_type,
+                'fund_type': enacted.fund_type,
+                'account': enacted.account,
+                'appropriation_id': enacted.appropriation_id,
+                'chapter_year': enacted.chapter_year,
+                'appropriation_amount': enacted.appropriation_amount,
+                'reappropriation_amount': enacted.reappropriation_amount,
+                'bill_language': enacted.bill_language,
+                'enacted_page': enacted.page_number,
+                'enacted_line': enacted.line_number,
+                'estimated_exec_page': est_page,
+                'estimated_exec_line': est_line,
+                'anchor_method': anchor_method,
+                'predecessor_approp_id': pred_id,
+                'predecessor_exec_page': pred_page,
+                'predecessor_exec_line': pred_line,
+                'successor_approp_id': succ_id,
+                'successor_exec_page': succ_page,
+                'successor_exec_line': succ_line,
+            })
+
+        return rows
+
 
 # =============================================================================
 # REPORT GENERATION
@@ -1503,6 +1816,7 @@ class ReportGenerator:
                 'page_number': r.page_number,
                 'line_number': r.line_number,
                 'fiscal_year': r.fiscal_year,
+                'bill_language': r.bill_language,
                 'raw_line': r.raw_line,
                 'source_file': r.source_file,
                 'has_underlined_content': r.has_underlined_content,
@@ -1674,6 +1988,158 @@ class ReportGenerator:
 
         return path
 
+    def generate_reconstruction_report(self, report: 'ReconstructionReport') -> Dict[str, Path]:
+        """Generate reconstruction validation outputs."""
+        outputs = {}
+        outputs['reconstruction_report'] = self._write_reconstruction_txt(report)
+        outputs['reconstruction_mismatches'] = self._write_reconstruction_csv(report)
+        return outputs
+
+    def _write_reconstruction_txt(self, report: 'ReconstructionReport') -> Path:
+        """Write human-readable reconstruction validation report."""
+        path = self.output_dir / 'reconstruction_validation.txt'
+
+        lines = [
+            "=" * 80,
+            "BUDGET RECONSTRUCTION VALIDATION",
+            f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "=" * 80,
+            "",
+            "CONCEPT",
+            "-" * 40,
+            "Round-trip proof: reconstruct the enacted 25-26 reappropriation section",
+            "from executive 26-27 data + our discontinued/missing_id lists, then",
+            "compare against the actual enacted reappropriations.",
+            "",
+            "  reconstructed = exec_reapprops(chyr<=2024) + discontinued + missing_id",
+            "",
+            "SUMMARY",
+            "-" * 40,
+            f"Enacted reappropriations (ground truth):  {report.enacted_reapprops:,}",
+            f"Reconstructed reappropriations:            {report.reconstructed_reapprops:,}",
+            f"",
+            f"Exact key matches:                         {report.exact_matches:,}",
+            f"Relaxed matches (agency|id|chyr):           {report.relaxed_matches:,}",
+            f"Total matched:                             {report.exact_matches + report.relaxed_matches:,}",
+            f"",
+            f"Missing from reconstruction:               {len(report.missing_from_reconstruction):,}",
+            f"Extra in reconstruction:                    {len(report.extra_in_reconstruction):,}",
+            f"",
+            f"COVERAGE: {report.coverage_pct:.1f}%",
+            "",
+        ]
+
+        # Per-agency breakdown
+        lines.extend([
+            "PER-AGENCY BREAKDOWN",
+            "-" * 40,
+            f"{'Agency':<50} {'Enacted':>8} {'Matched':>8} {'Missing':>8} {'Extra':>8} {'Cov%':>6}",
+            "-" * 90,
+        ])
+
+        sorted_agencies = sorted(
+            report.per_agency.items(),
+            key=lambda x: x[1]['enacted'],
+            reverse=True
+        )
+
+        for agency, data in sorted_agencies:
+            ag_cov = (data['matched'] / data['enacted'] * 100) if data['enacted'] > 0 else 0.0
+            lines.append(
+                f"{agency[:50]:<50} {data['enacted']:>8} {data['matched']:>8} "
+                f"{data['missing']:>8} {data['extra']:>8} {ag_cov:>5.1f}%"
+            )
+
+        # List missing items
+        if report.missing_from_reconstruction:
+            lines.extend([
+                "",
+                "",
+                f"ITEMS MISSING FROM RECONSTRUCTION ({len(report.missing_from_reconstruction)})",
+                "-" * 40,
+            ])
+            for r in sorted(report.missing_from_reconstruction,
+                            key=lambda x: x.reappropriation_amount, reverse=True)[:50]:
+                lines.append(
+                    f"  {r.agency} | ID: {r.appropriation_id} | chyr: {r.chapter_year} | "
+                    f"amt: ${r.reappropriation_amount:,} | acct: {r.account} | pg: {r.page_number}"
+                )
+            if len(report.missing_from_reconstruction) > 50:
+                lines.append(f"  ... and {len(report.missing_from_reconstruction) - 50} more (see CSV)")
+
+        # List extra items
+        if report.extra_in_reconstruction:
+            lines.extend([
+                "",
+                "",
+                f"EXTRA IN RECONSTRUCTION ({len(report.extra_in_reconstruction)})",
+                "-" * 40,
+            ])
+            for r in sorted(report.extra_in_reconstruction,
+                            key=lambda x: x.reappropriation_amount, reverse=True)[:50]:
+                lines.append(
+                    f"  {r.agency} | ID: {r.appropriation_id} | chyr: {r.chapter_year} | "
+                    f"amt: ${r.reappropriation_amount:,} | acct: {r.account} | src: {r.source_budget} | pg: {r.page_number}"
+                )
+            if len(report.extra_in_reconstruction) > 50:
+                lines.append(f"  ... and {len(report.extra_in_reconstruction) - 50} more (see CSV)")
+
+        with open(path, 'w') as f:
+            f.write('\n'.join(lines))
+
+        return path
+
+    def _write_reconstruction_csv(self, report: 'ReconstructionReport') -> Path:
+        """Write reconstruction mismatches to CSV for inspection."""
+        path = self.output_dir / 'reconstruction_mismatches.csv'
+
+        rows = []
+        for r in report.missing_from_reconstruction:
+            rows.append({
+                'category': 'missing_from_reconstruction',
+                'agency': r.agency,
+                'appropriation_id': r.appropriation_id,
+                'chapter_year': r.chapter_year,
+                'appropriation_amount': r.appropriation_amount,
+                'reappropriation_amount': r.reappropriation_amount,
+                'account': r.account,
+                'record_type': r.record_type,
+                'page_number': r.page_number,
+                'source_budget': r.source_budget,
+                'composite_key': r.composite_key(),
+            })
+        for r in report.extra_in_reconstruction:
+            rows.append({
+                'category': 'extra_in_reconstruction',
+                'agency': r.agency,
+                'appropriation_id': r.appropriation_id,
+                'chapter_year': r.chapter_year,
+                'appropriation_amount': r.appropriation_amount,
+                'reappropriation_amount': r.reappropriation_amount,
+                'account': r.account,
+                'record_type': r.record_type,
+                'page_number': r.page_number,
+                'source_budget': r.source_budget,
+                'composite_key': r.composite_key(),
+            })
+
+        df = pd.DataFrame(rows)
+        df.to_csv(path, index=False)
+        return path
+
+    def write_insertion_locations_csv(self, insertion_rows: List[dict]) -> Path:
+        """Write discontinued items with estimated executive insertion locations."""
+        path = self.output_dir / 'discontinued_insertion_locations.csv'
+        df = pd.DataFrame(insertion_rows)
+        # Sort by estimated exec page, then line for easy navigation
+        sort_cols = ['estimated_exec_page', 'estimated_exec_line', 'agency']
+        df = df.sort_values(
+            by=sort_cols,
+            na_position='last'
+        )
+        df.to_csv(path, index=False)
+        return path
+
     def generate_budgetary_reports(self, budgetary_results: BudgetaryComparisonResults) -> Dict[str, Path]:
         """Generate reports for budgetary sub-account level analysis."""
         outputs = {}
@@ -1755,15 +2221,15 @@ class NYSBudgetAnalyzer:
         print("=" * 70)
 
         # Step 1: Extract enacted budget
-        print("\n[1/6] Extracting enacted budget...")
+        print("\n[1/7] Extracting enacted budget...")
         enacted_records, enacted_budgetary = self.extractor.extract_records(enacted_pdf, "enacted")
 
         # Step 2: Extract executive budget
-        print("\n[2/6] Extracting executive budget...")
+        print("\n[2/7] Extracting executive budget...")
         executive_records, executive_budgetary = self.extractor.extract_records(executive_pdf, "executive")
 
         # Step 3: Deduplicate
-        print("\n[3/5] Deduplicating records...")
+        print("\n[3/7] Deduplicating records...")
         enacted_deduped = self.deduplicator.deduplicate(enacted_records)
         executive_deduped = self.deduplicator.deduplicate(executive_records)
         print(f"  Enacted: {len(enacted_records)} -> {len(enacted_deduped)} unique")
@@ -1772,7 +2238,7 @@ class NYSBudgetAnalyzer:
             print(f"  (Filtered {len(enacted_budgetary)} enacted / {len(executive_budgetary)} executive budgetary sub-lines)")
 
         # Step 4: Compare budgets (4-pass matching)
-        print("\n[4/5] Comparing budgets (4-pass matching)...")
+        print("\n[4/7] Comparing budgets (4-pass matching)...")
         results = self.comparator.compare(enacted_deduped, executive_deduped)
         print(f"  Continued:          {len(results.continued):,}")
         print(f"  Modified:           {len(results.modified):,}")
@@ -1780,9 +2246,33 @@ class NYSBudgetAnalyzer:
         print(f"  Discontinued:       {len(results.discontinued):,}")
         print(f"  Missing ID:         {len(results.missing_id):,}")
 
-        # Step 5: Generate reports
-        print("\n[5/5] Generating reports...")
+        # Step 5: Reconstruction validation
+        print("\n[5/7] Running reconstruction validation...")
+        recon_report = self.comparator.reconstruct_and_validate(results)
+        print(f"  Enacted reappropriations: {recon_report.enacted_reapprops:,}")
+        print(f"  Reconstructed:            {recon_report.reconstructed_reapprops:,}")
+        print(f"  Exact matches:            {recon_report.exact_matches:,}")
+        print(f"  Relaxed matches:          {recon_report.relaxed_matches:,}")
+        print(f"  Missing from recon:       {len(recon_report.missing_from_reconstruction):,}")
+        print(f"  Extra in recon:           {len(recon_report.extra_in_reconstruction):,}")
+        print(f"  COVERAGE: {recon_report.coverage_pct:.1f}%")
+
+        # Step 6: Compute insertion locations for discontinued items
+        print("\n[6/7] Computing insertion locations for discontinued items...")
+        insertion_rows = self.comparator.compute_insertion_locations(results)
+        anchor_counts = defaultdict(int)
+        for row in insertion_rows:
+            anchor_counts[row['anchor_method']] += 1
+        for method, count in sorted(anchor_counts.items()):
+            print(f"  {method}: {count}")
+
+        # Step 7: Generate reports
+        print("\n[7/7] Generating reports...")
         outputs = self.reporter.generate_all_reports(results)
+        recon_outputs = self.reporter.generate_reconstruction_report(recon_report)
+        outputs.update(recon_outputs)
+        insertion_path = self.reporter.write_insertion_locations_csv(insertion_rows)
+        outputs['insertion_locations'] = insertion_path
         for name, path in outputs.items():
             print(f"  {name}: {path}")
 
@@ -1801,6 +2291,7 @@ class NYSBudgetAnalyzer:
         print(f"Likely reorganized (needs review): ${reorganized_total:,.0f}")
         print(f"Missing approp ID (needs review):  ${missing_id_total:,.0f}")
         print(f"Affecting {len(set(r.enacted_record.agency for r in results.discontinued))} agencies")
+        print(f"\nReconstruction coverage: {recon_report.coverage_pct:.1f}%")
 
         return results
 

@@ -157,6 +157,34 @@ Located at `~/Downloads/ATL/` — 46 insert PDFs from last year's cycle. Shows:
 
 This applies to **all agencies**, not just Education.
 
+### Assembly AA Adds Deliverable (COMPLETED)
+
+**File**: `Assembly_AA_Adds_OlderThan5Yr.xlsx` (root of repo, gitignored)
+
+**Scope**: Education ATL Assembly adds (advance_code == 'AA') with SFS undisbursed balances for ChYr ≤ 2021.
+
+**Results**: 91 detail rows, 32 unique programs, **$229,245,265 total undisbursed**
+
+**Methodology**:
+1. Known AA mappings dictionary (65+ confirmed approp_id → program pairs) matched to SFS
+2. BPS AA items (355 total) matched to enacted CSVs by exact amount + chapter year → approp_id → SFS lookup
+3. Formula aid IDs excluded (~27 executive/formula programs)
+4. Ambiguous matches (approp IDs matching 3+ different BPS programs) removed
+
+**Top items by undisbursed balance**:
+- School Safety Improvement Teams (56200): $68M
+- My Brother's Keeper (56069): $47M
+- Smart Schools Bond Act (55918/55933): $34M
+- Digital Inclusion (55958): $15M
+- Senate/Assembly Grants (23482/23483): $13.8M
+
+**4 sheets**: Summary, By Program, Detail (ChYr ≤ 2021), Unmatched BPS AA Items
+
+**Caveats**:
+- 337 of 355 BPS AA items unmatched — most are small grants ($20-50K) inside lump approp 23482 (Assembly Grants in Aid). SFS only tracks at approp_id level.
+- Some large items (School Safety $68M, Smart Schools $34M) may be executive programs sharing advance codes — user should validate
+- Education-only for now; other agencies need separate analysis
+
 ## Known Extractor Issues
 
 ### Items without approp IDs (not captured)
@@ -204,7 +232,8 @@ Reapprops 26-27/
 
 ## Pending Work
 
-1. **Continue page-by-page Education ATL review** — next page: 275 (pages 272-274 need checking for items)
-2. **Older-than-5-years tracking** (boss priority) — filter for chapter_year <= 2021, match SFS balances, compile spreadsheet for deputy
-3. **Investigate extractor bug** on page 297 (55909/55933 have valid IDs but weren't captured)
-4. **Capital re-run** (deferred until ATL complete)
+1. **Continue page-by-page Education ATL review** — next page: 275 (pages 272-274 need checking for items). Education walkthrough completed through page ~450 in prior session (349 inserts).
+2. ~~**Assembly AA adds deliverable** (boss priority)~~ — **DONE**. 91 rows, 32 programs, $229M. Needs user validation of large items.
+3. **Older-than-5-years tracking for other agencies** — Education AA adds done; need to extend to all agencies and all add types (SA, JA, executive)
+4. **Investigate extractor bug** on page 297 (55909/55933 have valid IDs but weren't captured)
+5. **Capital re-run** (deferred until ATL complete)

@@ -262,11 +262,11 @@ class BudgetPatterns:
             re.IGNORECASE
         )
 
-        # Fund type
+        # Fund type (top-level only; sub-fund names like "Federal Education Fund"
+        # are excluded so they don't overwrite the correct parent fund type)
         self.FUND_TYPE = re.compile(
             r'(General Fund|Special Revenue Funds?\s*-\s*Federal|Special Revenue Funds?\s*-\s*Other|'
-            r'Capital Projects Fund|Capital Projects Funds?\s*-\s*Other|Fiduciary Funds?|'
-            r'Federal Education Fund|Federal Health and Human Services)',
+            r'Capital Projects Fund|Capital Projects Funds?\s*-\s*Other|Fiduciary Funds?)',
             re.IGNORECASE
         )
 
@@ -496,14 +496,8 @@ class PDFExtractor:
                     if not any(excl in agency for excl in self.patterns.AGENCY_EXCLUDE):
                         context.agency = agency
 
-        # Scan full page for fund type and account
-        fund_match = self.patterns.FUND_TYPE.search(page_text)
-        if fund_match:
-            context.fund_type = fund_match.group(1).strip()
-
-        account_match = self.patterns.ACCOUNT.search(page_text)
-        if account_match:
-            context.account = account_match.group(1).strip()
+        # Fund type and account are now tracked inline during line-by-line
+        # extraction, so they carry over correctly across page boundaries.
 
         return context
 
@@ -580,6 +574,16 @@ class PDFExtractor:
             if line_match:
                 line_num = int(line_match.group(1))
                 line_stripped = line_match.group(2)
+
+            # Track section headers inline so items inherit the correct
+            # fund/account even when a new section starts mid-page
+            fund_match = self.patterns.FUND_TYPE.search(line_stripped)
+            if fund_match:
+                context.fund_type = fund_match.group(1).strip()
+
+            account_match = self.patterns.ACCOUNT.search(line_stripped)
+            if account_match:
+                context.account = account_match.group(1).strip()
 
             # Check for chapter citation (starts new chunk)
             chapter_match = self.patterns.CHAPTER_LAW.search(line_stripped)
@@ -849,6 +853,16 @@ class PDFExtractor:
             if line_match:
                 line_num = int(line_match.group(1))
                 line_stripped = line_match.group(2)
+
+            # Track section headers inline so items inherit the correct
+            # fund/account even when a new section starts mid-page
+            fund_match = self.patterns.FUND_TYPE.search(line_stripped)
+            if fund_match:
+                context.fund_type = fund_match.group(1).strip()
+
+            account_match = self.patterns.ACCOUNT.search(line_stripped)
+            if account_match:
+                context.account = account_match.group(1).strip()
 
             # Scan for real approp IDs in any line (updates parent tracker)
             if is_state_ops:

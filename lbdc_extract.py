@@ -112,7 +112,7 @@ class ParsingState:
 # ============================================================================
 
 # The ONE anchor: (re. $X,XXX) or (re. $X,XXX,XXX)
-RE_REAPPROP = re.compile(r'\(re\.\s*\$\s*([\d,]+)\s*\)')
+RE_REAPPROP = re.compile(r'\(re\.\s*\$?\s*([\d,]+)\s*\)')
 
 # Chapter year headers
 RE_CHAPTER_START = re.compile(r'^By\s+chapter\s+\d+')

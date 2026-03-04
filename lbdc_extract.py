@@ -31,12 +31,16 @@ from lbdc_editor import LBDCClient, LBDCDocument
 class Reappropriation:
     """A single reappropriation extracted from a budget bill HTML."""
     # Hierarchical location
-    program: str              # e.g. "ADULT CAREER AND CONTINUING EDUCATION SERVICES PROGRAM"
     fund: str                 # e.g. "General Fund; Local Assistance Account - 10000"
     chapter_year: int         # e.g. 2024
 
     # Amounts
     reapprop_amount: int      # The (re. $X) amount
+
+    # Fields with defaults
+    agency: str = ""          # e.g. "EDUCATION DEPARTMENT"
+    budget_type: str = ""     # e.g. "AID TO LOCALITIES"
+    program: str = ""         # e.g. "ADULT CAREER AND CONTINUING EDUCATION SERVICES PROGRAM"
     approp_amount: Optional[int] = None  # Original appropriation amount
 
     # Identification
@@ -60,8 +64,9 @@ class Reappropriation:
 @dataclass
 class StructuralElement:
     """A structural marker (program/fund/chapter_year header) with its HTML position."""
-    elem_type: str            # 'program' | 'fund' | 'chapter_year'
+    elem_type: str            # 'agency' | 'program' | 'fund' | 'chapter_year'
     text: str                 # The header text
+    agency: str = ""
     program: str = ""
     fund: str = ""
     chapter_year: int = 0
@@ -87,11 +92,14 @@ class ExtractionResult:
 @dataclass
 class ParsingState:
     """Tracks hierarchical state during parsing."""
+    agency: str = ""
+    budget_type: str = ""     # "AID TO LOCALITIES" | "STATE OPERATIONS" | "CAPITAL PROJECTS"
     program: str = ""
     fund_lines: List[str] = field(default_factory=list)
     fund: str = ""
     chapter_year: int = 0
     chapter_citation: str = ""
+    in_reapprop_section: bool = False  # True after we see "REAPPROPRIATIONS" header
 
     # Buffer for accumulating bill language lines
     pending_buffer: List[str] = field(default_factory=list)
@@ -107,7 +115,7 @@ class ParsingState:
 RE_REAPPROP = re.compile(r'\(re\.\s*\$\s*([\d,]+)\s*\)')
 
 # Chapter year headers
-RE_CHAPTER_START = re.compile(r'^By\s+chapter\s+\d+', re.IGNORECASE)
+RE_CHAPTER_START = re.compile(r'^By\s+chapter\s+\d+')
 RE_CHAPTER_YEAR = re.compile(r'of\s+the\s+laws\s+of\s+(\d{4})')
 
 # Executive "amended and reappropriated" format
@@ -128,17 +136,10 @@ RE_APPROP_ID = re.compile(r'\((\d{5})\)')
 RE_AMOUNT = re.compile(r'([\d,]+)\s*\.+\s*\(re\.')
 RE_AMOUNT_WITH_DOTS = re.compile(r'([\d,]+)\s*\.{2,}')
 
-# Program headers
-KNOWN_PROGRAMS = [
-    "ADULT CAREER AND CONTINUING EDUCATION SERVICES PROGRAM",
-    "CULTURAL EDUCATION PROGRAM",
-    "OFFICE OF HIGHER EDUCATION AND THE PROFESSIONS PROGRAM",
-    "OFFICE OF PREKINDERGARTEN THROUGH GRADE TWELVE EDUCATION PROGRAM",
-]
-
 # Fund patterns
 RE_FUND_TOP = re.compile(
-    r'^(General Fund|Special Revenue Funds\s*-\s*Federal|Special Revenue Funds\s*-\s*Other)$',
+    r'^(General Fund|Special Revenue Funds\s*-\s*Federal|Special Revenue Funds\s*-\s*Other|'
+    r'Capital Projects Fund|Fiduciary Funds?)$',
     re.IGNORECASE
 )
 RE_ACCOUNT_LINE = re.compile(r'Account\s*-\s*\d{4,5}|Fund\s*-\s*\d{4,5}', re.IGNORECASE)
@@ -147,9 +148,20 @@ RE_ACCOUNT_LINE = re.compile(r'Account\s*-\s*\d{4,5}|Fund\s*-\s*\d{4,5}', re.IGN
 RE_LINE_NUM = re.compile(r'^(\d{1,2})\s+(.+)$')
 
 # Page header patterns (to skip)
-RE_PAGE_HEADER = re.compile(r'^\d{3}\s+\d{5}-\d{2}-\d$')
-RE_DEPT_HEADER = re.compile(r'^EDUCATION DEPARTMENT$')
-RE_ATL_HEADER = re.compile(r'^AID TO LOCALITIES\s*-\s*REAPPROPRIATIONS\s+\d{4}-\d{2}$')
+RE_PAGE_HEADER = re.compile(r'^\d{1,4}\s+(?:DRAFT\s+)?\d{4,5}-\d{2}-\d$')
+# Agency header: ALL CAPS centered line (repeated on every page)
+RE_AGENCY_HEADER = re.compile(r'^[A-Z][A-Z\s,\-&\.\'/()]+$')
+# Budget type + reapprop header
+RE_BUDGET_TYPE_HEADER = re.compile(
+    r'^(AID TO LOCALITIES|STATE OPERATIONS|CAPITAL PROJECTS)'
+    r'(?:\s*-\s*REAPPROPRIATIONS)?\s+\d{4}-\d{2}$',
+    re.IGNORECASE
+)
+# Budget type + reapprop (the one we care about)
+RE_REAPPROP_HEADER = re.compile(
+    r'^(AID TO LOCALITIES|STATE OPERATIONS|CAPITAL PROJECTS)\s*-\s*REAPPROPRIATIONS\s+\d{4}-\d{2}$',
+    re.IGNORECASE
+)
 
 
 # ============================================================================
@@ -171,11 +183,9 @@ def strip_line_number(text: str) -> Tuple[Optional[int], str]:
     return None, text
 
 
-def is_header_line(line: str) -> bool:
-    """Check if a line is a page header (not bill content)."""
-    return bool(RE_PAGE_HEADER.match(line) or
-                RE_DEPT_HEADER.match(line) or
-                RE_ATL_HEADER.match(line))
+def is_page_header_line(line: str) -> bool:
+    """Check if a line is a page number + draft ID header (not bill content)."""
+    return bool(RE_PAGE_HEADER.match(line))
 
 
 def is_fund_header_line(text: str) -> bool:
@@ -238,6 +248,47 @@ def parse_amendment_info(text: str) -> dict:
 
 
 # ============================================================================
+# PRE-SCAN: Discover programs from SCHEDULE sections
+# ============================================================================
+
+def discover_programs(html: str) -> set:
+    """
+    Pre-scan the HTML to find all program names from SCHEDULE sections.
+
+    Programs appear as ALL-CAPS lines followed by dot leaders and amounts
+    in the SCHEDULE section of each agency. This gives us the definitive
+    set of program names to use for structural detection in reapprop sections.
+    """
+    doc = LBDCDocument(html)
+    pages = doc.get_pages()
+    programs = set()
+
+    for page in pages:
+        for p_tag in page.find_all("p"):
+            text = p_tag.get_text().strip()
+            text_clean = re.sub(r'^\d{1,2}\s+', '', text).strip()
+
+            # Program lines in SCHEDULE: ALL CAPS + "PROGRAM" or "PROGRAMS" + dot leaders
+            if ('PROGRAM' in text_clean and text_clean.split('..')[0].strip().isupper()
+                    and '...' in text_clean):
+                prog_name = re.split(r'\s*\.{2,}', text_clean)[0].strip()
+                # Strip any trailing amounts/numbers that leaked through
+                prog_name = re.sub(r'\s+[\d,]+$', '', prog_name).strip()
+                if len(prog_name) > 10 and prog_name.endswith(('PROGRAM', 'PROGRAMS', 'SUPPORT')):
+                    programs.add(prog_name)
+
+            # Also match standalone ALL-CAPS program names in reapprop sections
+            # (they appear without dot leaders there)
+            if (text_clean.isupper() and 'PROGRAM' in text_clean
+                    and len(text_clean) > 10 and '...' not in text_clean
+                    and '$' not in text_clean and '---' not in text_clean
+                    and text_clean.endswith(('PROGRAM', 'PROGRAMS', 'SUPPORT'))):
+                programs.add(text_clean)
+
+    return programs
+
+
+# ============================================================================
 # MAIN EXTRACTION
 # ============================================================================
 
@@ -249,9 +300,12 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
     all pages and lines, maintaining hierarchical state, and emit a
     Reappropriation every time we hit a (re. $X) anchor.
 
-    Also tracks structural elements (program/fund/chapter_year headers)
-    with their HTML positions for later insertion placement.
+    Works universally across ATL, State Operations, and Capital bills,
+    and across all agencies. Program headers are detected dynamically.
     """
+    # Pre-scan to discover program names
+    known_programs = discover_programs(html)
+
     doc = LBDCDocument(html)
     pages = doc.get_pages()
 
@@ -260,9 +314,11 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
     state = ParsingState()
 
     global_p = 0  # Running count across all pages
+    _prev_was_agency_header = False  # Track multi-line agency names
 
     for page_idx, page in enumerate(pages):
         lines = page.find_all("p")
+        _prev_was_agency_header = False  # Reset per page
 
         for p_idx, p_tag in enumerate(lines):
             line_text = p_tag.get_text()
@@ -279,30 +335,93 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
             if not content_stripped:
                 continue
 
-            # Skip page headers
-            if is_header_line(content_stripped):
+            # ── CHECK 0a: Page number + draft header (e.g. "315  12553-09-5") ──
+            if is_page_header_line(content_stripped):
+                continue
+
+            # ── CHECK 0b: Agency header (ALL CAPS centered, repeated on every page) ──
+            # Agency headers appear at p_idx 2-3 (centered, ALL CAPS).
+            # Some agencies wrap to 2 lines (e.g., "JUSTICE CENTER FOR THE PROTECTION"
+            # / "OF PEOPLE WITH SPECIAL NEEDS"). Detect by checking p_idx 2-4.
+            if p_idx <= 4 and RE_AGENCY_HEADER.match(content_stripped):
+                candidate = content_stripped.strip()
+                # Filter out structural/noise lines
+                if (len(candidate) > 5
+                        and 'DRAFT' not in candidate
+                        and 'SCHEDULE' not in candidate
+                        and 'APPROPRIATIONS' not in candidate
+                        and 'REAPPROPRIATIONS' not in candidate
+                        and not candidate.startswith('STATE OF')
+                        and not candidate.startswith('_')
+                        and not candidate.startswith('AN ACT')
+                        and 'BUDGET BILL' not in candidate
+                        and '---' not in candidate
+                        and '===' not in candidate
+                        and not RE_BUDGET_TYPE_HEADER.match(candidate)):
+                    # Check if this is a continuation of a multi-line agency name
+                    # (p_idx 3 following an agency set at p_idx 2 on this same page)
+                    if (p_idx == 3 and _prev_was_agency_header
+                            and not RE_BUDGET_TYPE_HEADER.match(candidate)):
+                        # Append to existing agency name
+                        state.agency = state.agency + " " + candidate
+                        # Update the last structure element
+                        for s in reversed(all_structures):
+                            if s.elem_type == 'agency':
+                                s.text = state.agency
+                                s.agency = state.agency
+                                break
+                    elif candidate != state.agency:
+                        state.agency = candidate
+                        all_structures.append(StructuralElement(
+                            elem_type='agency',
+                            text=candidate,
+                            agency=candidate,
+                            page_idx=page_idx,
+                            p_idx=p_idx,
+                            global_p_idx=current_global_p,
+                        ))
+                    _prev_was_agency_header = (p_idx == 2)
+                else:
+                    _prev_was_agency_header = False
+                continue
+            else:
+                _prev_was_agency_header = False
+
+            # ── CHECK 0c: Budget type header (e.g. "AID TO LOCALITIES - REAPPROPRIATIONS 2024-25") ──
+            if RE_BUDGET_TYPE_HEADER.match(content_stripped):
+                bt_match = RE_BUDGET_TYPE_HEADER.match(content_stripped)
+                state.budget_type = bt_match.group(1).upper()
+                if RE_REAPPROP_HEADER.match(content_stripped):
+                    state.in_reapprop_section = True
+                continue
+
+            # Only extract reappropriations from REAPPROPRIATIONS sections
+            if not state.in_reapprop_section:
                 continue
 
             # ── CHECK 1: Program header ──
             is_program = False
-            for prog in KNOWN_PROGRAMS:
-                if content_stripped == prog:
-                    state.program = prog
-                    state.fund_lines = []
-                    state.fund = ""
-                    state.chapter_year = 0
-                    state.chapter_citation = ""
-                    is_program = True
+            if content_stripped.isupper() and len(content_stripped) > 10:
+                for prog in known_programs:
+                    if content_stripped == prog:
+                        state.program = prog
+                        # Only reset fund if the next non-blank line is a fund header.
+                        # Some programs (e.g. CUNY "CATEGORICAL PROGRAMS") share the
+                        # parent's fund and don't have their own fund header.
+                        state.chapter_year = 0
+                        state.chapter_citation = ""
+                        is_program = True
 
-                    all_structures.append(StructuralElement(
-                        elem_type='program',
-                        text=prog,
-                        program=prog,
-                        page_idx=page_idx,
-                        p_idx=p_idx,
-                        global_p_idx=current_global_p,
-                    ))
-                    break
+                        all_structures.append(StructuralElement(
+                            elem_type='program',
+                            text=prog,
+                            agency=state.agency,
+                            program=prog,
+                            page_idx=page_idx,
+                            p_idx=p_idx,
+                            global_p_idx=current_global_p,
+                        ))
+                        break
 
             if is_program:
                 continue
@@ -322,6 +441,7 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
                     all_structures.append(StructuralElement(
                         elem_type='fund',
                         text=state.fund,
+                        agency=state.agency,
                         program=state.program,
                         fund=state.fund,
                         page_idx=page_idx,
@@ -338,14 +458,22 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
                 year_match = RE_CHAPTER_YEAR.search(content_stripped)
                 if year_match:
                     state.chapter_year = int(year_match.group(1))
-                state.chapter_citation = content_stripped
 
-                if content_stripped.rstrip().endswith(':'):
-                    # Complete citation on one line
+                # Handle mid-line colon: "By chapter 53 ... of 2023:  Aid to public libraries"
+                # The citation ends at the colon; text after colon is bill language.
+                colon_after_year = re.search(
+                    r'of\s+the\s+laws\s+of\s+\d{4}\s*:', content_stripped
+                )
+                if colon_after_year:
+                    colon_pos = colon_after_year.end()
+                    state.chapter_citation = content_stripped[:colon_pos].strip()
+                    remainder = content_stripped[colon_pos:].strip()
+
                     amend_info = parse_amendment_info(state.chapter_citation)
                     all_structures.append(StructuralElement(
                         elem_type='chapter_year',
                         text=state.chapter_citation,
+                        agency=state.agency,
                         program=state.program,
                         fund=state.fund,
                         chapter_year=state.chapter_year,
@@ -356,6 +484,33 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
                         p_idx=p_idx,
                         global_p_idx=current_global_p,
                     ))
+
+                    # If there's bill language after the colon, start accumulating it
+                    if remainder:
+                        state.pending_buffer = [remainder]
+                        state.pending_p_indices = [(page_idx, p_idx)]
+                        state.pending_global_indices = [current_global_p]
+                elif content_stripped.rstrip().endswith(':'):
+                    # Complete citation on one line (colon at end)
+                    state.chapter_citation = content_stripped
+                    amend_info = parse_amendment_info(state.chapter_citation)
+                    all_structures.append(StructuralElement(
+                        elem_type='chapter_year',
+                        text=state.chapter_citation,
+                        agency=state.agency,
+                        program=state.program,
+                        fund=state.fund,
+                        chapter_year=state.chapter_year,
+                        chapter_citation=state.chapter_citation,
+                        amendment_type=amend_info['amendment_type'],
+                        amending_year=amend_info['amending_year'],
+                        page_idx=page_idx,
+                        p_idx=p_idx,
+                        global_p_idx=current_global_p,
+                    ))
+                else:
+                    # Citation continues on next line(s)
+                    state.chapter_citation = content_stripped
                 continue
 
             # ── CHECK 3b: Continuation of chapter citation ──
@@ -365,11 +520,32 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
                 if year_match:
                     state.chapter_year = int(year_match.group(1))
 
-                if content_stripped.rstrip().endswith(':') or 'to read' in content_stripped.lower():
+                is_complete = (content_stripped.rstrip().endswith(':')
+                               or 'to read' in content_stripped.lower())
+
+                # Also check for mid-line colon after year
+                colon_after_year = re.search(
+                    r'of\s+the\s+laws\s+of\s+\d{4}\s*:', state.chapter_citation
+                )
+                if colon_after_year and not is_complete:
+                    # Mid-line colon — split citation from bill language
+                    colon_pos = colon_after_year.end()
+                    full_text = state.chapter_citation
+                    state.chapter_citation = full_text[:colon_pos].strip()
+                    remainder = full_text[colon_pos:].strip()
+                    is_complete = True
+
+                    if remainder:
+                        state.pending_buffer = [remainder]
+                        state.pending_p_indices = [(page_idx, p_idx)]
+                        state.pending_global_indices = [current_global_p]
+
+                if is_complete:
                     amend_info = parse_amendment_info(state.chapter_citation)
                     all_structures.append(StructuralElement(
                         elem_type='chapter_year',
                         text=state.chapter_citation,
+                        agency=state.agency,
                         program=state.program,
                         fund=state.fund,
                         chapter_year=state.chapter_year,
@@ -404,6 +580,8 @@ def extract_from_html(html: str, source_file: str = "") -> ExtractionResult:
                         start_global = current_global_p
 
                     reapprop = Reappropriation(
+                        agency=state.agency,
+                        budget_type=state.budget_type,
                         program=state.program,
                         fund=state.fund,
                         chapter_year=state.chapter_year,

@@ -2,6 +2,8 @@
 
 Universal mapping between spreadsheet data and LBDC HTML bill format across all three budget types (ATL, State Operations, Capital), all agencies, and all budget years.
 
+**Validated against real bill**: A8803-X (ATL 2024-25) — 1,359 pages, 41 agencies, 5,247 reappropriations extracted with 100% hierarchy completeness (agency, program, fund, chapter_year for every record).
+
 ## The LBDC HTML Format
 
 Every budget bill, regardless of type, renders to the same HTML structure via the LBDC API (`POST /extract-html/`):
@@ -32,27 +34,34 @@ Every budget bill, regardless of type, renders to the same HTML structure via th
 
 ## Universal Document Hierarchy
 
-All three budget types share the same nesting structure, with one key difference at level 3:
+All three budget types share the same nesting structure:
 
 ```
 Level 1: Agency          (ALL CAPS header, e.g., "EDUCATION DEPARTMENT")
 Level 2: Budget Type     ("AID TO LOCALITIES - REAPPROPRIATIONS 2025-26")
-Level 3: Program         (ATL only — e.g., "ADULT CAREER AND CONTINUING EDUCATION SERVICES PROGRAM")
-         ─── or ───
-         (STOPS/CAP skip directly to Fund)
+Level 3: Program         (ALL agencies in ATL — e.g., "COMMUNITY SERVICES PROGRAM")
+                         (STOPS/CAP may skip directly to Fund)
 Level 4: Fund            ("General Fund", "Special Revenue Funds - Federal", "Capital Projects Fund")
 Level 5: Account         ("Local Assistance Account - 10000", "State Purposes Account - 10050")
 Level 6: Chapter Year    ("By chapter 53, section 1, of the laws of 2024:")
 Level 7: Reappropriation (bill language + amounts + (re. $X) anchor)
 ```
 
+**Key finding from A8803-X validation**: Programs are NOT ATL-only. ALL 41 agencies in the ATL bill have program sub-divisions (105 unique program names). Examples:
+- OFFICE FOR THE AGING → COMMUNITY SERVICES PROGRAM
+- DCJS → CRIME PREVENTION AND REDUCTION STRATEGIES PROGRAM
+- DOH → 13 programs (ADMINISTRATION, AIDS INSTITUTE, CENTER FOR COMMUNITY HEALTH, etc.)
+- DOT → 10 programs (MASS TRANSPORTATION, RURAL TRANSIT, etc.)
+
+Some agencies wrap to 2 lines (e.g., "JUSTICE CENTER FOR THE PROTECTION" / "OF PEOPLE WITH SPECIAL NEEDS").
+
 ### Where the hierarchy maps in HTML
 
 | Level | HTML Detection | Persistence |
 |-------|---------------|-------------|
-| Agency | ALL-CAPS line near page top, excluded words filter | Persists until new agency header |
+| Agency | ALL-CAPS line at p_idx 2-3, with multi-line merge | Persists until new agency header |
 | Budget Type | Regex: `STATE OPERATIONS\|AID TO LOCALITIES\|CAPITAL PROJECTS` | Set once per document |
-| Program | Exact string match against known list (ATL only) | Resets fund, account, chapter state |
+| Program | Dynamic: pre-scanned from SCHEDULE sections (105 names in ATL) | Resets chapter state (fund carries over) |
 | Fund | `General Fund`, `Special Revenue Funds - ...`, `Capital Projects Fund` | Resets chapter state |
 | Account | `Xxx Account - NNNNN` pattern | Completes the fund block |
 | Chapter Year | `By chapter N, section N, of the laws of YYYY:` | Groups reappropriations |

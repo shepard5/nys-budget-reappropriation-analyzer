@@ -33,31 +33,76 @@ def round_up_to_1k(x: float) -> int:
     return int(math.ceil(x / 1000.0) * 1000)
 
 
-def load_sfs_lookup(agency: Optional[str] = None) -> pd.DataFrame:
-    """Load SFS undisbursed-balance lookup.
+def load_sfs_from_export(path: Path) -> pd.DataFrame:
+    """Load the native SFS sheet export (`SFS, All Education.xlsx`).
 
-    If `agency` is given, filter to that agency (matches ATL Drops' `agency`
-    column). If None (default), load all agencies — required for full-ATL
-    runs. The returned DataFrame carries the agency key for multi-agency
-    joins.
+    The export has a 2-row header block (amount labels on row 5, chartfield
+    labels on row 6) so we read with no header and pick columns by position:
+      col G (index 6)  = composite_key  ("AGENCY|approp_id|year|amount")
+      col U (index 20) = Undisbursed Approp Balance
+
+    Returns a DataFrame with columns:
+      agency_s, approp_id_s, chapter_year_i, approp_amount_i, sfs_balance
+    parsed out of the composite_key, ready to merge against the drops
+    produced by compare.py.
     """
+    raw = pd.read_excel(path, sheet_name="Sheet1", header=None)
+    sub = raw.iloc[7:][[6, 20]].copy()
+    sub.columns = ["composite_key", "sfs_balance"]
+    sub = sub.dropna(subset=["composite_key"])
+    # composite_key format: "AGENCY NAME|APPROP_ID|YEAR|AMOUNT"
+    parts = sub["composite_key"].str.split("|", expand=True)
+    sub["agency_s"] = parts[0].str.strip()
+    sub["approp_id_s"] = parts[1].fillna("").astype(str).str.strip()
+    sub["chapter_year_i"] = pd.to_numeric(parts[2], errors="coerce").fillna(0).astype(int)
+    sub["approp_amount_i"] = pd.to_numeric(parts[3], errors="coerce").fillna(0).astype(int)
+    sub["sfs_balance"] = pd.to_numeric(sub["sfs_balance"], errors="coerce")
+    # The native SFS export has no reapprop_amount; fill with 0 so the merge
+    # schema stays consistent. NaN-approp-id items won't match via this
+    # source regardless (every SFS row has an approp_id in its composite_key).
+    sub["reapprop_amount_i"] = 0
+    return sub[["agency_s", "approp_id_s", "chapter_year_i",
+                "approp_amount_i", "reapprop_amount_i", "sfs_balance"]].copy()
+
+
+def load_sfs_from_atl_drops(agency: Optional[str] = None) -> pd.DataFrame:
+    """Fallback SFS loader — use the manually-populated SFS column in
+    ATL Drops.xlsx when the native SFS sheet export isn't available.
+    Legacy path; prefer load_sfs_from_export()."""
     df = pd.read_excel(ROOT / "inputs" / "atl_drops_sfs.xlsx", sheet_name="ATL Drops")
     if agency is not None:
         df = df[df.agency == agency].copy()
     else:
         df = df.copy()
-    # Normalize column names
     df = df.rename(columns={"SFS Undisbursed Funds ": "sfs_balance",
                              "agency": "agency_s"})
-    # Cast keys
     df["approp_id_s"] = df["appropriation id"].apply(
         lambda x: "" if pd.isna(x) else str(int(float(x)))
     )
     df["chapter_year_i"] = df["chapter year"].fillna(0).astype(int)
     df["approp_amount_i"] = df["appropriation amount"].fillna(0).astype(int)
     df["reapprop_amount_i"] = df["reappropriation amount"].fillna(0).astype(int)
-    return df[["agency_s", "approp_id_s", "chapter_year_i", "approp_amount_i",
-               "reapprop_amount_i", "sfs_balance"]].copy()
+    return df[["agency_s", "approp_id_s", "chapter_year_i",
+               "approp_amount_i", "reapprop_amount_i", "sfs_balance"]].copy()
+
+
+def load_sfs_lookup(agency: Optional[str] = None) -> pd.DataFrame:
+    """Load SFS undisbursed-balance lookup — prefer native SFS export.
+
+    Resolution order:
+      1. inputs/sfs_export.xlsx (native SFS sheet export with composite_key
+         + Undisbursed Approp Balance) — authoritative, 7,747 Education rows
+      2. inputs/atl_drops_sfs.xlsx (ATL Drops with manually-populated SFS
+         column) — legacy fallback, covers only the ~400 items the analyst
+         looked up
+    """
+    sfs_native = ROOT / "inputs" / "sfs_export.xlsx"
+    if sfs_native.exists():
+        df = load_sfs_from_export(sfs_native)
+        if agency is not None:
+            df = df[df.agency_s == agency].copy()
+        return df
+    return load_sfs_from_atl_drops(agency=agency)
 
 
 def join_sfs(comparison_df: pd.DataFrame, sfs: pd.DataFrame) -> pd.DataFrame:
@@ -138,8 +183,11 @@ def join_sfs(comparison_df: pd.DataFrame, sfs: pd.DataFrame) -> pd.DataFrame:
     # Drop helper cols
     merged = merged.drop(columns=["agency_s", "approp_id_s", "chapter_year_i",
                                   "approp_amount_i", "reapprop_amount_i"])
+    # Eligibility: raw SFS balance must be >= $1,000. Rounding up a $500
+    # balance to $1,000 would otherwise mis-classify it as eligible.
+    # Per user's rule: "anything less than $1,000 is left dropped".
     merged["sfs_rounded"] = merged["sfs_balance"].apply(round_up_to_1k)
-    merged["insert_eligible"] = merged["sfs_rounded"] >= 1000
+    merged["insert_eligible"] = merged["sfs_balance"] >= 1000
     return merged
 
 

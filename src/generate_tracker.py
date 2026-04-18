@@ -78,8 +78,12 @@ def main():
             continue
         ops.append((page_idx, after_idx, ins["label"]))
 
-    # Sort DESCENDING by (page_idx, after_idx) so insertions don't shift earlier indices
-    ops.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    # Sort DESCENDING by (page_idx, after_idx) so bottom-up insertions don't
+    # shift earlier positions. Tiebreak by label DESCENDING so that when two
+    # labels share the same anchor, the one with the EARLIER letter ends up
+    # visually ABOVE — we insert later-letters first so earlier-letters land
+    # between the anchor and the already-inserted later-letters.
+    ops.sort(key=lambda x: (x[0], x[1], x[2]), reverse=True)
 
     for page_idx, after_idx, label in ops:
         ok = doc.insert_line(after_idx, f"Insert {label}", page=page_idx)

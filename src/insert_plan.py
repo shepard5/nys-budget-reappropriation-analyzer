@@ -488,6 +488,7 @@ def main():
     # between consecutive survivors (so each insert is one contiguous unstruck
     # run in the 25-26 source).
     inserts: List[dict] = []
+    unplaceable: List[int] = []  # enacted indices with no valid anchor
 
     anchor_pairs: List = []
     for i in range(len(exec_anchors) + 1):
@@ -514,23 +515,20 @@ def main():
             if mid_idx not in eligible_map:
                 return True
 
-        # Structural transition check
+        # Structural transition check — ANY transition between two survivors
+        # means the enacted doc has a program/fund/chyr header line between
+        # them that the insert generator will strike, visually bisecting the
+        # unstruck content. Always split so each group gets its own label.
         prev_r = enacted.loc[prev_idx]
         curr_r = enacted.loc[curr_idx]
-        # Program change
         if prev_r.program != curr_r.program:
-            if curr_r.program in exec_program_set:
-                return True  # program header in exec → struck in insert
-        # Fund change (within same program)
-        elif prev_r.fund != curr_r.fund:
-            if (curr_r.program, curr_r.fund) in exec_fund_set:
-                return True
-        # Chapter-year change (within same fund)
-        else:
-            prev_chyr = (prev_r.program, prev_r.fund, int(prev_r.chapter_year), int(prev_r.amending_year))
-            curr_chyr = (curr_r.program, curr_r.fund, int(curr_r.chapter_year), int(curr_r.amending_year))
-            if prev_chyr != curr_chyr and curr_chyr in exec_chyr_set:
-                return True
+            return True
+        if prev_r.fund != curr_r.fund:
+            return True
+        prev_chyr = (int(prev_r.chapter_year), int(prev_r.amending_year))
+        curr_chyr = (int(curr_r.chapter_year), int(curr_r.amending_year))
+        if prev_chyr != curr_chyr:
+            return True
         return False
 
     def _build_insert(survivors_list: List[int], upper_exec, lower_exec) -> dict:
@@ -539,6 +537,27 @@ def main():
         last_surv = survivors_list[-1]
         first_page = int(enacted.loc[first_surv].first_page)
         last_page = max(int(enacted.loc[idx].last_page) for idx in survivors_list)
+
+        # If the first survivor needs its chapter-year OR fund header
+        # preserved AND that header lives on an EARLIER page than first_page,
+        # extend the source slice backward so the generator can locate and
+        # keep it. Without this, the header sits outside the slice and the
+        # generator silently loses it.
+        fs_row = enacted.loc[first_surv]
+        fs_src = fs_row.source if "source" in enacted.columns else "reapprop"
+        fs_needs_ch = fs_src != "appropriation" and (
+            fs_row.program, fs_row.fund,
+            int(fs_row.chapter_year), int(fs_row.amending_year)
+        ) not in exec_chyr_set
+        fs_needs_fd = (fs_row.program, fs_row.fund) not in exec_fund_set
+        if fs_needs_ch and "chyr_page" in enacted.columns:
+            chyr_page = int(fs_row.chyr_page) if pd.notna(fs_row.chyr_page) else -1
+            if 0 <= chyr_page < first_page:
+                first_page = chyr_page
+        if fs_needs_fd and "fund_page" in enacted.columns:
+            fund_page = int(fs_row.fund_page) if pd.notna(fs_row.fund_page) else -1
+            if 0 <= fund_page < first_page:
+                first_page = fund_page
         # All survivors in an insert share the same source (insert_plan only
         # groups contiguous same-fund survivors, and source is implied by
         # which section they live in).
@@ -558,9 +577,18 @@ def main():
         fund_needs_header = {}
         for idx in survivors_list:
             r = enacted.loc[idx]
-            chapter_year_needs_header[idx] = (
-                r.program, r.fund, int(r.chapter_year), int(r.amending_year)
-            ) not in exec_chyr_set
+            # Only reapprop-sourced survivors can have a chyr header preserved
+            # in the insert PDF — the appropriations section has no "By chapter
+            # N, section M, of the laws of YYYY:" line above each item. For
+            # approp survivors we rely on the fund/program headers the
+            # extractor already brackets them with.
+            src = r.source if "source" in enacted.columns else "reapprop"
+            if src == "appropriation":
+                chapter_year_needs_header[idx] = False
+            else:
+                chapter_year_needs_header[idx] = (
+                    r.program, r.fund, int(r.chapter_year), int(r.amending_year)
+                ) not in exec_chyr_set
             fund_needs_header[idx] = (r.program, r.fund) not in exec_fund_set
 
         # Pick anchor_upper that respects (program, fund) scope of survivors.
@@ -639,7 +667,15 @@ def main():
                 groups[-1].append(b)
 
         for g in groups:
-            inserts.append(_build_insert(g, upper_exec, lower_exec))
+            ins = _build_insert(g, upper_exec, lower_exec)
+            # Drop doc_start fallbacks — these are items whose program/fund
+            # doesn't exist anywhere in the exec bill, so we have no real
+            # place to anchor them. Emit to unplaceable.csv for manual review
+            # rather than dumping a phantom label on exec page 1.
+            if ins["anchor_upper"]["anchor_kind"] == "doc_start":
+                unplaceable.extend(g)
+                continue
+            inserts.append(ins)
 
     # Assign labels: per exec PDF page, order insert groups by their anchor's
     # exec line; A/B/C...
@@ -676,18 +712,45 @@ def main():
 
     # Invariants (cheap runtime assertions to catch regressions)
     _all_survivor_idxs = [int(s["enacted_idx"]) for ins in inserts for s in ins["survivors"]]
+    _unplaceable_set = set(unplaceable)
     _eligible_idxs = set(eligible_map)
     assert len(_all_survivor_idxs) == len(set(_all_survivor_idxs)), \
         f"Duplicate survivor enacted_idxs in plan: {len(_all_survivor_idxs) - len(set(_all_survivor_idxs))}"
-    assert set(_all_survivor_idxs) == _eligible_idxs, \
-        f"Mismatch: plan={len(_all_survivor_idxs)} eligible={len(_eligible_idxs)} missing={_eligible_idxs - set(_all_survivor_idxs)} extra={set(_all_survivor_idxs) - _eligible_idxs}"
+    assert set(_all_survivor_idxs) | _unplaceable_set == _eligible_idxs, \
+        f"Mismatch: plan+unplaceable={len(_all_survivor_idxs) + len(_unplaceable_set)} eligible={len(_eligible_idxs)}"
     _labels = [ins["label"] for ins in inserts]
     assert len(_labels) == len(set(_labels)), \
         f"Duplicate labels in plan: {[l for l in _labels if _labels.count(l) > 1]}"
     _plan_total = sum(s["new_reapprop_amount"] for ins in inserts for s in ins["survivors"])
+    _unplaceable_total = sum(eligible_map[idx]["sfs_rounded"] for idx in unplaceable)
     _eligible_total = sum(v["sfs_rounded"] for v in eligible_map.values())
-    assert _plan_total == _eligible_total, \
-        f"Dollar total mismatch: plan=${_plan_total:,} eligible=${_eligible_total:,}"
+    assert _plan_total + _unplaceable_total == _eligible_total, \
+        f"Dollar total mismatch: plan=${_plan_total:,} unplaceable=${_unplaceable_total:,} eligible=${_eligible_total:,}"
+
+    # Emit unplaceable items to their own CSV
+    if unplaceable:
+        rows = []
+        for idx in unplaceable:
+            r = enacted.loc[idx]
+            rows.append({
+                "enacted_idx": int(idx),
+                "agency": r.agency if "agency" in enacted.columns else "",
+                "source": r.source if "source" in enacted.columns else "reapprop",
+                "program": r.program,
+                "fund": r.fund,
+                "approp_id": "" if pd.isna(r.approp_id) else str(int(float(r.approp_id))),
+                "chapter_year": int(r.chapter_year),
+                "approp_amount": int(r.approp_amount),
+                "sfs_rounded": eligible_map[idx]["sfs_rounded"],
+                "sfs_balance": eligible_map[idx]["sfs_balance"],
+                "enacted_page": int(r.first_page),
+                "enacted_line": int(r.first_line),
+                "reason": "no-anchor-in-exec (doc_start fallback)",
+            })
+        unpl_df = pd.DataFrame(rows)
+        unpl_out = ROOT / "outputs" / "unplaceable.csv"
+        unpl_df.to_csv(unpl_out, index=False)
+        print(f"\n  [!] {len(unplaceable)} items unplaceable (${_unplaceable_total:,}) — saved: {unpl_out.relative_to(ROOT)}")
 
     out = ROOT / "outputs" / "insert_plan.json"
     out.write_text(json.dumps(inserts, indent=2))

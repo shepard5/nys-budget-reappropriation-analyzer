@@ -36,6 +36,8 @@ from patterns import (
     DOTS_AMOUNT_RE,
     APPROP_ID_RE,
     BODY_LINE_START_RE,
+    SKIP_LINE_RE,
+    SUBSCHEDULE_LABEL_RE,
     parse_int_amount,
     looks_like_agency_header,
     section_of_title,
@@ -80,6 +82,14 @@ class Reappropriation:
     last_line_num: int
     global_p_start: int
     global_p_end: int
+
+    # Page where the governing chapter-year header was emitted (0-based HTML
+    # page index). Needed by insert_plan to extend the source-slice backward
+    # when the chyr header lives on a prior page. -1 if none.
+    chyr_page_idx: int = -1
+    # Page where the governing fund-top line was emitted. Same rationale:
+    # multi-line fund headers can start several pages before the survivor.
+    fund_page_idx: int = -1
 
     # Uniqueness key
     def composite_key(self) -> Tuple[str, str, str, str, int, int]:
@@ -178,6 +188,14 @@ def extract(html: str) -> ExtractResult:
     fund_parts: List[str] = []       # accumulated 1-3 lines that form the fund
     chapter_year: int = 0
     amending_year: int = 0
+    chyr_page_idx: int = -1  # HTML page index where the current chyr header sits
+    fund_page_idx: int = -1  # HTML page index where the current fund-top sits
+    # When the prior reapprop had a "sub-schedule ... Total of sub-schedule"
+    # attached, we skip those body lines so the NEXT reapprop's first_line
+    # isn't pulled back to the top of the sub-schedule. Enter on sub-schedule
+    # label, exit on Total-of-subschedule (+ trailing separator) OR any
+    # structural header.
+    in_subschedule: bool = False
     # Bill section — one of None, "appropriation", "reapprop". Detected from
     # the bill-title page-header line on each page. This extractor only emits
     # reapprop records in the reapprop section; it processes the appropriations
@@ -211,6 +229,9 @@ def extract(html: str) -> ExtractResult:
                     fund_parts = []
                     chapter_year = 0
                     amending_year = 0
+                    chyr_page_idx = -1
+                    fund_page_idx = -1
+                    in_subschedule = False
                     buf_start_idx = None
             elif t_hdr and looks_like_agency_header(t_hdr):
                 new_agency = re.sub(r"\s+", " ", t_hdr)
@@ -221,6 +242,9 @@ def extract(html: str) -> ExtractResult:
                     fund_parts = []
                     chapter_year = 0
                     amending_year = 0
+                    chyr_page_idx = -1
+                    fund_page_idx = -1
+                    in_subschedule = False
                     buf_start_idx = None
                     section = None
             i += 1
@@ -241,8 +265,11 @@ def extract(html: str) -> ExtractResult:
         if PROGRAM_RE.match(t):
             program = t
             fund_parts = []
+            fund_page_idx = -1
             chapter_year = 0
             amending_year = 0
+            chyr_page_idx = -1
+            in_subschedule = False
             buf_start_idx = None
             i += 1
             continue
@@ -252,6 +279,8 @@ def extract(html: str) -> ExtractResult:
         # separated from a chapter-year header by a blank.
         if FUND_TOP_RE.match(t):
             fund_parts = [re.sub(r"\s+", " ", t)]
+            fund_page_idx = L.page_idx
+            in_subschedule = False
             last_part_indent = _body_indent(L.raw_text)
             j = i + 1
             while j < len(lines) and len(fund_parts) < 3:
@@ -297,6 +326,8 @@ def extract(html: str) -> ExtractResult:
         if m:
             chapter_year = int(m.group(1))
             amending_year = int(m.group(2)) if m.group(2) else 0
+            chyr_page_idx = L.page_idx
+            in_subschedule = False
             buf_start_idx = None
             # If this header line didn't terminate with ":", look for a
             # continuation line (e.g. "section 1, of the laws of 2024:" or
@@ -325,7 +356,50 @@ def extract(html: str) -> ExtractResult:
             continue
 
         # --- Body line: part of a reapprop ---
+        # Sub-schedule attribution: a reapprop's sub-schedule lives AFTER its
+        # (re. $X) terminator, so by the time the extractor sees those lines
+        # it's no longer buffering. Without guard-rails, the FIRST body line
+        # of the sub-schedule starts a fresh buffer — pulling the NEXT
+        # reapprop's first_line back onto the sub-schedule and causing the
+        # insert generator to treat allocation rows as survivor body.
+        #
+        # We enter "in_subschedule" when we see the "sub-schedule" label, and
+        # stay in it until we see the closing "Total of sub-schedule" + its
+        # trailing separator — OR any structural reset (handled above).
         if buf_start_idx is None:
+            if SUBSCHEDULE_LABEL_RE.match(t):
+                in_subschedule = True
+                i += 1
+                continue
+            if in_subschedule:
+                # Detect close: line starts with "Total of sub-schedule"
+                # (the actual amount follows on the same line). After the
+                # total, also swallow a trailing separator line if present.
+                if re.match(r"^Total of sub-schedule\b", t, re.IGNORECASE):
+                    in_subschedule = False
+                    # Also skip trailing "------" separator(s) on following
+                    # non-blank body lines.
+                    j = i + 1
+                    while j < len(lines):
+                        Lj = lines[j]
+                        if Lj.is_blank or Lj.line_num is None:
+                            j += 1
+                            continue
+                        tj = Lj.text.strip()
+                        if re.match(r"^[-=]{5,}\s*$", tj):
+                            j += 1
+                            continue
+                        break
+                    i = j
+                    continue
+                # Any body line inside the sub-schedule block: skip.
+                i += 1
+                continue
+            # Structural noise outside a sub-schedule (separator, subtotal,
+            # stray "Program account subtotal" etc.) — don't start a buffer.
+            if SKIP_LINE_RE.match(t):
+                i += 1
+                continue
             buf_start_idx = i
 
         # Check if this line is a reapprop terminator
@@ -417,6 +491,8 @@ def extract(html: str) -> ExtractResult:
                 last_line_num=L.line_num or 0,
                 global_p_start=lines[buf_start_idx].global_p_idx,
                 global_p_end=L.global_p_idx,
+                chyr_page_idx=chyr_page_idx,
+                fund_page_idx=fund_page_idx,
             )
             result.reapprops.append(rr)
 
@@ -487,6 +563,8 @@ def main():
                 "last_line": r.last_line_num,
                 "bill_language": r.bill_language,
                 "source": source_tag,
+                "chyr_page": r.chyr_page_idx,
+                "fund_page": r.fund_page_idx,
             } for r in result.reapprops]
             df = pd.DataFrame(rows)
             df.to_csv(outputs / csv_name, index=False)

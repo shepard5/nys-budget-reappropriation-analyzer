@@ -73,89 +73,97 @@ def _page_lines_with_nums(page) -> List:
     return out
 
 
-def _find_chapter_year_header_lines(page_lines: List, survivor_first_line: int) -> List[int]:
+def _find_chapter_year_header_lines(
+    pages_lines_cache: List[List],
+    survivor_pg_off: int,
+    survivor_first_line: int,
+) -> List[Tuple[int, int]]:
     """
-    Given the lines on the page containing the survivor, walk BACKWARD from
-    the survivor's first line to find the chapter-year header that introduces
-    it. Return the visible line numbers of the header (1-2 lines).
+    Walk BACKWARD across all slice pages from the survivor to find the
+    chapter-year header that introduces it. Returns a list of
+    (pg_off, visible_line_num) tuples identifying the header line(s) —
+    usually 1 line, or 2 if the header wraps without ":".
     """
-    # Find survivor's p_idx on this page
-    surv_idx = None
-    for i, (p, ln, text, blank) in enumerate(page_lines):
-        if ln == survivor_first_line:
-            surv_idx = i
+    # Flatten (pg_off, idx_on_page, p, ln, text, blank) across all pages
+    flat: List[Tuple[int, int, object, Optional[int], str, bool]] = []
+    for pg_off, page_lines in enumerate(pages_lines_cache):
+        for idx_on_page, (p, ln, text, blank) in enumerate(page_lines):
+            flat.append((pg_off, idx_on_page, p, ln, text, blank))
+
+    # Find the survivor in the flat list
+    surv_flat_idx = None
+    for k, (pg_off, _ip, _p, ln, _t, _b) in enumerate(flat):
+        if pg_off == survivor_pg_off and ln == survivor_first_line:
+            surv_flat_idx = k
             break
-    if surv_idx is None:
+    if surv_flat_idx is None:
         return []
 
-    # Walk backward for the nearest chapter-year-start line
-    header_start_idx = None
-    for i in range(surv_idx - 1, -1, -1):
-        p, ln, text, blank = page_lines[i]
-        if blank:
-            continue
-        if ln is None:
+    header_flat_idx = None
+    for k in range(surv_flat_idx - 1, -1, -1):
+        _pg, _ip, _p, ln, text, blank = flat[k]
+        if blank or ln is None:
             continue
         if is_chapter_year_header(text) is not None:
-            header_start_idx = i
+            header_flat_idx = k
             break
-        # If we hit another body line (a preceding reapprop's content), stop —
-        # this survivor shares the chapter-year header with items before it
-        # that are struck. We still need the header.
-    if header_start_idx is None:
+    if header_flat_idx is None:
         return []
 
-    result = [page_lines[header_start_idx][1]]  # visible line num
-    # Check for continuation line if header didn't end with ":"
-    first_text = page_lines[header_start_idx][2].rstrip()
-    if not first_text.endswith(":"):
-        for j in range(header_start_idx + 1, surv_idx):
-            p, ln, text, blank = page_lines[j]
-            if blank or ln is None:
+    pg_h, _ip_h, _p_h, ln_h, text_h, _b_h = flat[header_flat_idx]
+    result: List[Tuple[int, int]] = [(pg_h, ln_h)]
+    # Continuation (header didn't end with ":")
+    if not text_h.rstrip().endswith(":"):
+        for k in range(header_flat_idx + 1, surv_flat_idx):
+            pg2, _ip, _p, ln2, _t, blank2 = flat[k]
+            if blank2 or ln2 is None:
                 continue
-            # Continuation line: add and stop
-            result.append(ln)
+            result.append((pg2, ln2))
             break
     return result
 
 
-def _find_fund_header_lines(page_lines: List, survivor_first_line: int) -> List[int]:
-    """Walk backward from survivor to find fund header (1-3 lines)."""
-    surv_idx = None
-    for i, (p, ln, text, blank) in enumerate(page_lines):
-        if ln == survivor_first_line:
-            surv_idx = i
+def _find_fund_header_lines(
+    pages_lines_cache: List[List],
+    survivor_pg_off: int,
+    survivor_first_line: int,
+) -> List[Tuple[int, int]]:
+    """Walk backward across the slice from survivor to find fund header (1-3 lines)."""
+    flat: List[Tuple[int, int, object, Optional[int], str, bool]] = []
+    for pg_off, page_lines in enumerate(pages_lines_cache):
+        for idx_on_page, (p, ln, text, blank) in enumerate(page_lines):
+            flat.append((pg_off, idx_on_page, p, ln, text, blank))
+
+    surv_flat_idx = None
+    for k, (pg_off, _ip, _p, ln, _t, _b) in enumerate(flat):
+        if pg_off == survivor_pg_off and ln == survivor_first_line:
+            surv_flat_idx = k
             break
-    if surv_idx is None:
+    if surv_flat_idx is None:
         return []
 
-    fund_lines: List[int] = []
-    # Walk backward until we find a fund-top line (General Fund / Special Revenue Funds - *)
-    # Collect it + any preceding related lines (actually we want the TOP line and lines
-    # AFTER it up to the survivor)
-    top_idx = None
-    for i in range(surv_idx - 1, -1, -1):
-        p, ln, text, blank = page_lines[i]
+    top_flat_idx = None
+    for k in range(surv_flat_idx - 1, -1, -1):
+        _pg, _ip, _p, ln, text, blank = flat[k]
         if blank or ln is None:
             continue
         if is_fund_top(text):
-            top_idx = i
+            top_flat_idx = k
             break
-    if top_idx is None:
+    if top_flat_idx is None:
         return []
 
-    # From top_idx forward, collect numbered non-chapter-year lines until we hit
-    # a chapter-year or body line (or 3 lines max)
-    for i in range(top_idx, surv_idx):
-        p, ln, text, blank = page_lines[i]
-        if blank or ln is None:
+    result: List[Tuple[int, int]] = []
+    for k in range(top_flat_idx, surv_flat_idx):
+        pg2, _ip, _p, ln2, text, blank = flat[k]
+        if blank or ln2 is None:
             continue
         if is_chapter_year_header(text) is not None:
             break
-        fund_lines.append(ln)
-        if len(fund_lines) >= 3:
+        result.append((pg2, ln2))
+        if len(result) >= 3:
             break
-    return fund_lines
+    return result
 
 
 def apply_insert_edits(doc: LBDCDocument, insert: dict) -> None:
@@ -176,29 +184,31 @@ def apply_insert_edits(doc: LBDCDocument, insert: dict) -> None:
                 keep_lines.add((first_pg_off, ln))
         else:
             # Survivor spans pages — keep from first_line to end of first page,
-            # then 1..last_line on last page
-            # Find max line_num on first page
+            # ALL lines on any intermediate pages, then 1..last_line on last page.
             max_first = max((ln for _, ln, _, _ in pages_lines_cache[first_pg_off] if ln), default=0)
             for ln in range(s["first_line"], max_first + 1):
                 keep_lines.add((first_pg_off, ln))
+            for mid_pg in range(first_pg_off + 1, last_pg_off):
+                if 0 <= mid_pg < len(pages_lines_cache):
+                    for _, ln, _, _ in pages_lines_cache[mid_pg]:
+                        if ln is not None:
+                            keep_lines.add((mid_pg, ln))
             for ln in range(1, s["last_line"] + 1):
                 keep_lines.add((last_pg_off, ln))
 
         # If needs_chapter_header, keep the chapter-year lines preceding this survivor
         if s["needs_chapter_header"]:
-            chyr_lines = _find_chapter_year_header_lines(
-                pages_lines_cache[first_pg_off], s["first_line"]
-            )
-            for ln in chyr_lines:
-                keep_lines.add((first_pg_off, ln))
+            for pg_off, ln in _find_chapter_year_header_lines(
+                pages_lines_cache, first_pg_off, s["first_line"]
+            ):
+                keep_lines.add((pg_off, ln))
 
         # If needs_fund_header, keep the fund header lines preceding this survivor
         if s["needs_fund_header"]:
-            fund_lines = _find_fund_header_lines(
-                pages_lines_cache[first_pg_off], s["first_line"]
-            )
-            for ln in fund_lines:
-                keep_lines.add((first_pg_off, ln))
+            for pg_off, ln in _find_fund_header_lines(
+                pages_lines_cache, first_pg_off, s["first_line"]
+            ):
+                keep_lines.add((pg_off, ln))
 
     # Walk pages and strike everything not in keep_lines — except:
     # - blank lines (nothing to strike)
@@ -248,20 +258,42 @@ def apply_insert_edits(doc: LBDCDocument, insert: dict) -> None:
                 continue
             old_txt = f"(re. ${format_amount(old_amt)})"
             new_txt = f"(re. ${format_amount(new_amt)})"
-            ok = doc.replace_text_tracked(old_txt, new_txt, page=page_off)
-            if not ok:
-                # Try variant without $
-                alt_old = f"(re. {format_amount(old_amt)})"
-                doc.replace_text_tracked(alt_old, new_txt, page=page_off)
+            # Scope the replace to the survivor's own <p>. Page-wide search
+            # picks the FIRST occurrence, which can collide with a struck
+            # sibling reapprop that happens to share the same old amount.
+            last_line = s["last_line"]
+            target_p = None
+            for p_tag, ln, _t, _b in pages_lines_cache[page_off]:
+                if ln == last_line:
+                    target_p = p_tag
+                    break
+            if target_p is not None:
+                ok = _replace_in_p(doc, target_p, old_txt, new_txt)
+                if not ok:
+                    _replace_in_p(doc, target_p,
+                                   f"(re. {format_amount(old_amt)})", new_txt)
+            else:
+                # Fallback: page-wide (legacy behavior)
+                ok = doc.replace_text_tracked(old_txt, new_txt, page=page_off)
+                if not ok:
+                    doc.replace_text_tracked(
+                        f"(re. {format_amount(old_amt)})", new_txt, page=page_off)
 
     # Insert label right BEFORE the earliest kept line in the insert.
     # That's either the first survivor's first line, or (if needs_chapter_header
-    # or needs_fund_header) the first kept structural header.
+    # or needs_fund_header widened the slice backward) the first kept structural
+    # header — which may live on an earlier page than the survivor's.
     first_surv = insert["survivors"][0]
-    first_pg_off = first_surv["first_page"] - source_html_start
+    first_surv_pg_off = first_surv["first_page"] - source_html_start
     first_surv_line = first_surv["first_line"]
 
-    # Earliest kept visible line on first survivor's page
+    # Earliest kept (pg_off, line) across the whole slice. Use that page, and
+    # the smallest kept line on it, as the label target.
+    if keep_lines:
+        earliest_pg = min(pg for (pg, _ln) in keep_lines)
+    else:
+        earliest_pg = first_surv_pg_off
+    first_pg_off = earliest_pg
     same_page_keeps = sorted(ln for (pg, ln) in keep_lines if pg == first_pg_off)
     target_first_line = same_page_keeps[0] if same_page_keeps else first_surv_line
 
@@ -282,6 +314,20 @@ def apply_insert_edits(doc: LBDCDocument, insert: dict) -> None:
         target_before_idx -= 1
     if target_before_idx is not None and target_before_idx >= 0:
         doc.insert_line(target_before_idx, f"Insert {insert['label']}", page=first_pg_off)
+
+
+def _replace_in_p(doc: LBDCDocument, p_tag, old_text: str, new_text: str) -> bool:
+    """Tracked-replace old_text with new_text ONLY within this <p>. Returns
+    True if a replacement occurred. Avoids the page-wide search in
+    LBDCDocument.replace_text_tracked, which picks the first occurrence and
+    can collide with a struck sibling reapprop sharing the same amount."""
+    from bs4 import NavigableString
+    for text_node in p_tag.find_all(string=True):
+        node_text = str(text_node)
+        if old_text in node_text:
+            doc._splice_tracked(text_node, old_text, new_text)
+            return True
+    return False
 
 
 def _strike_p_in_place(p_tag, doc: LBDCDocument) -> None:
@@ -324,12 +370,16 @@ def main():
     plan = json.loads((OUTPUTS / "insert_plan.json").read_text())
 
     # Load both enacted sources; each insert picks based on survivors[0].source.
-    html_by_source = {
-        "reapprop": (CACHE / "enacted_25-26.html").read_text(),
-    }
+    enacted_html = (CACHE / "enacted_25-26.html").read_text()
+    html_by_source = {"reapprop": enacted_html}
     approps_path = CACHE / "enacted_25-26_approps.html"
     if approps_path.exists():
+        # Education-scope workflow: separate sliced approps PDF was uploaded.
         html_by_source["appropriation"] = approps_path.read_text()
+    else:
+        # Full-bill workflow: reapprops + approps both live in the same
+        # enacted HTML. Survivors' first_page indices reference THIS doc.
+        html_by_source["appropriation"] = enacted_html
 
     if "--pilot" in args:
         labels = [plan[0]["label"]]

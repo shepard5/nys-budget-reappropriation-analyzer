@@ -17,8 +17,9 @@ Inserts are produced for items with sfs_balance >= $1,000.
 """
 
 import math
+import re
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 import pandas as pd
 
@@ -33,91 +34,239 @@ def round_up_to_1k(x: float) -> int:
     return int(math.ceil(x / 1000.0) * 1000)
 
 
+def _parse_prefix(s) -> str:
+    """'23462 - Foo'  ->  '23462'.  Used on the SFS export's 'Budgetary
+    Program' and 'Budgetary Department' cells which are formatted
+    "<code> - <short description>".  Returns '' if no leading integer."""
+    m = re.match(r"^\s*(\d+)", str(s))
+    return m.group(1) if m else ""
+
+
+def _parse_fiscal_year(s) -> Optional[int]:
+    """'A200102' -> 2001.  The SFS 'Budgetary Budget Reference' column
+    uses an A<STARTYR><ENDYR_SHORT> format."""
+    m = re.match(r"^A(\d{4})", str(s))
+    return int(m.group(1)) if m else None
+
+
+def _learn_dept_to_agency_mapping(sfs_df: pd.DataFrame) -> Dict[str, str]:
+    """
+    When the SFS export is raw (no pre-built composite_key with an agency
+    prefix), we have dept codes (3300000, 3900000, ...) but not agency
+    names as they appear in the bill ("EDUCATION DEPARTMENT", ...).
+
+    Learn the mapping from the enacted extraction: for each enacted row
+    we know the agency name AND the (approp_id, year, approp_amount)
+    triple.  Joining against SFS on that triple gives us (agency_name,
+    dept_code) pairs; majority-vote per agency to pin down the one
+    dept_code it uses.
+    """
+    enacted_csvs = [
+        ROOT / "outputs" / "enacted_reapprops.csv",
+        ROOT / "outputs" / "enacted_approps.csv",
+    ]
+    frames = []
+    for p in enacted_csvs:
+        if p.exists():
+            frames.append(pd.read_csv(p))
+    if not frames:
+        return {}  # no enacted data yet — can't learn, fall back to no agency
+    enacted = pd.concat(frames, ignore_index=True)
+    if "agency" not in enacted.columns:
+        return {}
+    enacted = enacted[enacted["agency"].notna() & (enacted["agency"] != "")].copy()
+    enacted["approp_id_s"] = enacted["approp_id"].apply(
+        lambda x: "" if pd.isna(x) else str(int(float(x)))
+    )
+    enacted["year_i"] = enacted["chapter_year"].astype(int)
+    enacted["amt_i"] = enacted["approp_amount"].astype(int)
+    keys = enacted[["agency", "approp_id_s", "year_i", "amt_i"]].rename(
+        columns={"approp_id_s": "approp_id_s", "year_i": "chapter_year_i",
+                 "amt_i": "approp_amount_i"}
+    )
+    joined = keys.merge(
+        sfs_df[["approp_id_s", "chapter_year_i", "approp_amount_i", "dept_code"]],
+        on=["approp_id_s", "chapter_year_i", "approp_amount_i"],
+        how="inner",
+    )
+    # Majority vote: for each agency, which dept_code appears most often?
+    counts = joined.groupby(["agency", "dept_code"]).size().reset_index(name="n")
+    # Winner per agency
+    dept_to_agency: Dict[str, str] = {}
+    for agency, group in counts.groupby("agency"):
+        winner = group.sort_values("n", ascending=False).iloc[0]
+        dept_to_agency[str(winner.dept_code)] = agency
+    return dept_to_agency
+
+
 def load_sfs_from_export(path: Path) -> pd.DataFrame:
     """Load a native SFS sheet export.
 
-    Expected shape: an xlsx with a sheet (any name — we use the first) that
-    contains a 2-row header block followed by data rows. Two columns are
-    required, identified by header text rather than position so layout
-    variations between agency exports don't matter:
+    Handles two formats:
 
-      composite_key          — "AGENCY NAME|approp_id|year|amount"
-      Undisbursed Approp Balance — numeric, the SFS remaining-balance
+    (1) PRE-BUILT COMPOSITE KEY (e.g. SFS, All Education.xlsx — an analyst
+        manually added a composite_key formula):
+          composite_key column = "AGENCY NAME|approp_id|year|amount"
+          Undisbursed Approp Balance column = numeric SFS remaining-balance
+        Parsed directly.
 
-    Both the Education export and any multi-agency export (all agencies in
-    one file) are consumed the same way. Rows missing composite_key are
-    treated as filters/metadata and skipped.
+    (2) RAW EXPORT (1.1 Appropriation Budgetary Overview.xlsx from SFS as
+        downloaded — no composite_key):
+          Budgetary Budget Reference  ("A200102" → year 2001)
+          Budgetary Program           ("23462 - Foo" → approp_id 23462)
+          Budgetary Department        ("3300000 - SED01-..." → dept_code)
+          Original Approp Amount / Current Appropriation
+          Undisbursed Approp Balance
+        We parse these, then learn a dept_code → agency_name mapping by
+        joining against the enacted extraction's known agency names, and
+        tag each SFS row with its agency.
 
     Returns a DataFrame with columns:
       agency_s, approp_id_s, chapter_year_i, approp_amount_i,
       reapprop_amount_i, sfs_balance
     """
-    # SFS exports carry the column headers across two stacked rows: amount
-    # labels (Undisbursed Approp Balance, Original Approp Amount, ...) sit
-    # on one row and chartfield labels (composite_key, Budgetary Fund, ...)
-    # on the next. Neither pandas single-row header gives us both column
-    # NAMES in one DataFrame. We scan the raw cells across the top of the
-    # sheet to resolve column POSITIONS by header TEXT, then read with
-    # those positions.
+    # Scan first sheet's top rows for header cells. We resolve column
+    # positions by header TEXT so the loader is robust to layout changes.
     xl = pd.ExcelFile(path)
-    chosen_sheet = None
-    ckey_col_idx = und_col_idx = None
-    data_start_row = None
-    for sheet in xl.sheet_names:
-        raw_full = pd.read_excel(path, sheet_name=sheet, header=None)
-        # Scan the first ~12 rows for the column labels.
-        header_rows_to_scan = min(12, len(raw_full))
-        found_ckey = found_und = None
-        last_header_row = -1
+
+    def _find_col(raw_full: pd.DataFrame, *substr_groups, exclude=()) -> Optional[int]:
+        """Return the column index whose header text (across the first ~12
+        rows) matches ALL substrings in any of the provided groups and does
+        NOT contain any of the `exclude` substrings. Each group is a tuple
+        of substrings that must all appear in the cell."""
+        exclude_lc = tuple(e.lower() for e in exclude)
         for col_idx in range(raw_full.shape[1]):
-            for row_idx in range(header_rows_to_scan):
+            for row_idx in range(min(12, len(raw_full))):
                 val = raw_full.iat[row_idx, col_idx]
                 if pd.isna(val):
                     continue
-                s = str(val).strip()
-                if found_ckey is None and "composite" in s.lower() and "key" in s.lower():
-                    found_ckey = col_idx
-                    last_header_row = max(last_header_row, row_idx)
-                if found_und is None and "Undisbursed" in s and "Balance" in s:
-                    found_und = col_idx
-                    last_header_row = max(last_header_row, row_idx)
-        if found_ckey is not None and found_und is not None:
-            ckey_col_idx = found_ckey
-            und_col_idx = found_und
-            chosen_sheet = sheet
-            data_start_row = last_header_row + 1
+                s = str(val)
+                s_lc = s.lower()
+                if any(ex in s_lc for ex in exclude_lc):
+                    continue
+                for group in substr_groups:
+                    if all(sub.lower() in s_lc for sub in group):
+                        return col_idx
+        return None
+
+    chosen_sheet = None
+    picked = None
+    for sheet in xl.sheet_names:
+        raw_full = pd.read_excel(path, sheet_name=sheet, header=None)
+        ckey_col = _find_col(raw_full, ("composite_key",), ("composite", "key"))
+        und_col = _find_col(raw_full, ("Undisbursed", "Balance"))
+        if und_col is None:
+            continue  # this sheet can't work
+        # Determine mode: composite_key pre-built, or raw export
+        if ckey_col is not None:
+            picked = ("composite", sheet, raw_full, ckey_col, und_col)
             break
-    if chosen_sheet is None:
+        bud_ref = _find_col(raw_full, ("Budget", "Reference"))
+        # Exclude "Level N" variants — "Budgetary Program Level 2" is a
+        # different column from the approp-id-bearing "Budgetary Program".
+        bud_prog = _find_col(raw_full, ("Budgetary", "Program"), exclude=("level",))
+        bud_dept = _find_col(raw_full, ("Budgetary", "Department"), exclude=("level",))
+        orig_amt = _find_col(raw_full, ("Original", "Approp", "Amount"))
+        curr_amt = _find_col(raw_full, ("Current", "Appropriation"))
+        if all(c is not None for c in (bud_ref, bud_prog, bud_dept)):
+            picked = ("raw", sheet, raw_full, bud_ref, bud_prog, bud_dept,
+                      orig_amt, curr_amt, und_col)
+            break
+    if picked is None:
         raise ValueError(
             f"SFS export at {path} missing required columns "
-            f"'composite_key' and/or 'Undisbursed Approp Balance'"
+            f"(need composite_key + Undisbursed Balance, OR raw schema "
+            f"with Budget Reference / Program / Department / Approp "
+            f"Amount / Undisbursed Balance)."
         )
 
-    raw_full = pd.read_excel(path, sheet_name=chosen_sheet, header=None)
-    sub = raw_full.iloc[data_start_row:, [ckey_col_idx, und_col_idx]].copy()
-    sub.columns = ["composite_key", "sfs_balance"]
-    sub = sub.dropna(subset=["composite_key"])
-    # Filter out header/metadata rows that sneak in before data (e.g., row
-    # containing the string "composite_key" as a repeated label).
-    sub = sub[~sub["composite_key"].astype(str).str.fullmatch("composite_key", case=False, na=False)]
-    # composite_key format: "AGENCY NAME|APPROP_ID|YEAR|AMOUNT"
-    parts = sub["composite_key"].astype(str).str.split("|", expand=True)
-    # Require all 4 pipe-separated parts; drop malformed rows.
-    if parts.shape[1] < 4:
-        raise ValueError(f"composite_key in {path} doesn't have 4 parts")
-    sub = sub[parts[3].notna()]
-    parts = parts.loc[sub.index]
-    sub["agency_s"] = parts[0].str.strip()
-    sub["approp_id_s"] = parts[1].fillna("").astype(str).str.strip()
-    sub["chapter_year_i"] = pd.to_numeric(parts[2], errors="coerce").fillna(0).astype(int)
-    sub["approp_amount_i"] = pd.to_numeric(parts[3], errors="coerce").fillna(0).astype(int)
+    mode = picked[0]
+    chosen_sheet = picked[1]
+    raw_full = picked[2]
+
+    # Find the first row whose cells in the detected columns are DATA
+    # (not header labels) — the row where a numeric-looking amount appears.
+    def _first_data_row(col_idx: int) -> int:
+        for r in range(min(20, len(raw_full))):
+            v = raw_full.iat[r, col_idx]
+            if pd.isna(v):
+                continue
+            if isinstance(v, (int, float)) and v != 0:
+                return r
+        return 12  # fallback
+
+    if mode == "composite":
+        _, _, _, ckey_col, und_col = picked
+        data_start = _first_data_row(und_col)
+        sub = raw_full.iloc[data_start:, [ckey_col, und_col]].copy()
+        sub.columns = ["composite_key", "sfs_balance"]
+        sub = sub.dropna(subset=["composite_key"])
+        parts = sub["composite_key"].astype(str).str.split("|", expand=True)
+        if parts.shape[1] < 4:
+            raise ValueError(f"composite_key in {path} doesn't have 4 parts")
+        sub = sub[parts[3].notna()]
+        parts = parts.loc[sub.index]
+        sub["agency_s"] = parts[0].str.strip()
+        sub["approp_id_s"] = parts[1].fillna("").astype(str).str.strip()
+        sub["chapter_year_i"] = pd.to_numeric(parts[2], errors="coerce").fillna(0).astype(int)
+        sub["approp_amount_i"] = pd.to_numeric(parts[3], errors="coerce").fillna(0).astype(int)
+        sub["sfs_balance"] = pd.to_numeric(sub["sfs_balance"], errors="coerce")
+        sub["reapprop_amount_i"] = 0
+        print(f"[*] SFS export (composite_key mode): {path.name}  "
+              f"sheet={chosen_sheet!r}  rows={len(sub)}  "
+              f"agencies={sub['agency_s'].nunique()}")
+        return sub[["agency_s", "approp_id_s", "chapter_year_i",
+                    "approp_amount_i", "reapprop_amount_i", "sfs_balance"]].copy()
+
+    # mode == "raw" — parse individual columns
+    _, _, _, bud_ref, bud_prog, bud_dept, orig_amt, curr_amt, und_col = picked
+    data_start = _first_data_row(und_col)
+    cols = [bud_ref, bud_prog, bud_dept, und_col]
+    col_names = ["bud_ref", "bud_prog", "bud_dept", "sfs_balance"]
+    if orig_amt is not None:
+        cols.append(orig_amt); col_names.append("orig_amt")
+    if curr_amt is not None:
+        cols.append(curr_amt); col_names.append("curr_amt")
+    sub = raw_full.iloc[data_start:, cols].copy()
+    sub.columns = col_names
+    sub = sub.dropna(subset=["bud_ref", "bud_prog"])
+
+    sub["chapter_year_i"] = sub["bud_ref"].apply(_parse_fiscal_year)
+    sub["approp_id_s"] = sub["bud_prog"].apply(_parse_prefix)
+    sub["dept_code"] = sub["bud_dept"].apply(_parse_prefix)
     sub["sfs_balance"] = pd.to_numeric(sub["sfs_balance"], errors="coerce")
-    # Native SFS export has no reapprop_amount; fill with 0 so the merge
-    # schema stays consistent. NaN-approp-id drops won't match via this
-    # source regardless (every SFS row has an approp_id in its composite_key).
+
+    # Amount: prefer Original Approp Amount; fall back to Current Appropriation
+    # when original is 0 (new items in the current fiscal year).
+    if "orig_amt" in sub.columns:
+        sub["approp_amount_i"] = pd.to_numeric(sub["orig_amt"], errors="coerce").fillna(0).astype(int)
+    else:
+        sub["approp_amount_i"] = 0
+    if "curr_amt" in sub.columns:
+        fallback_mask = sub["approp_amount_i"] == 0
+        sub.loc[fallback_mask, "approp_amount_i"] = (
+            pd.to_numeric(sub.loc[fallback_mask, "curr_amt"], errors="coerce").fillna(0).astype(int)
+        )
+
+    # Drop rows with no year / approp_id.
+    sub = sub.dropna(subset=["chapter_year_i"])
+    sub = sub[sub["approp_id_s"] != ""]
+    sub["chapter_year_i"] = sub["chapter_year_i"].astype(int)
+
+    # Learn dept_code → agency_name by joining against enacted extraction.
+    mapping = _learn_dept_to_agency_mapping(sub)
+    if not mapping:
+        print(f"[!] Could not learn dept_code→agency mapping "
+              f"(no enacted extraction found yet); tagging with empty agency.")
+        sub["agency_s"] = ""
+    else:
+        sub["agency_s"] = sub["dept_code"].map(mapping).fillna("")
+
     sub["reapprop_amount_i"] = 0
-    print(f"[*] SFS export: {path.name}  sheet={chosen_sheet!r}  "
-          f"rows={len(sub)}  agencies={sub['agency_s'].nunique()}")
+    print(f"[*] SFS export (raw mode): {path.name}  sheet={chosen_sheet!r}  "
+          f"rows={len(sub)}  dept_codes={sub['dept_code'].nunique()}  "
+          f"agencies resolved={sub[sub['agency_s'] != ''].agency_s.nunique()}  "
+          f"SFS rows tagged={(sub['agency_s'] != '').sum()}")
     return sub[["agency_s", "approp_id_s", "chapter_year_i",
                 "approp_amount_i", "reapprop_amount_i", "sfs_balance"]].copy()
 

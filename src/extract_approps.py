@@ -78,6 +78,7 @@ class Appropriation:
     first_line_num: int = 0
     last_page_idx: int = 0
     last_line_num: int = 0
+    fund_page_idx: int = -1
 
 
 # Structural regexes imported from patterns.py above.
@@ -102,6 +103,7 @@ def extract(html: str) -> ExtractApprops:
     agency: str = ""
     program: str = ""
     fund_parts: List[str] = []
+    fund_page_idx: int = -1
     buf_start_idx: Optional[int] = None
     # Section — "appropriation" or "reapprop". We only emit appropriations
     # records in the "appropriation" section of each agency.
@@ -122,6 +124,7 @@ def extract(html: str) -> ExtractApprops:
                     section = sec
                     program = ""
                     fund_parts = []
+                    fund_page_idx = -1
                     buf_start_idx = None
             elif t_hdr and looks_like_agency_header(t_hdr):
                 new_agency = re.sub(r"\s+", " ", t_hdr)
@@ -129,6 +132,7 @@ def extract(html: str) -> ExtractApprops:
                     agency = new_agency
                     program = ""
                     fund_parts = []
+                    fund_page_idx = -1
                     buf_start_idx = None
                     section = None
             i += 1
@@ -158,6 +162,7 @@ def extract(html: str) -> ExtractApprops:
         if m:
             program = m.group(1)
             fund_parts = []
+            fund_page_idx = -1
             buf_start_idx = None
             i += 1
             continue
@@ -174,6 +179,7 @@ def extract(html: str) -> ExtractApprops:
                     raw_name = Lk.text.strip() + " PROGRAM"
                     program = re.sub(r"\s+", " ", raw_name)
                     fund_parts = []
+                    fund_page_idx = -1
                     buf_start_idx = None
                 break
             i += 1
@@ -186,6 +192,7 @@ def extract(html: str) -> ExtractApprops:
             # would otherwise break fund-key equality against the reapprop
             # section's single-spaced strings.
             fund_parts = [re.sub(r"\s+", " ", t)]
+            fund_page_idx = L.page_idx
             # Track the body-indent of the most recent fund-part line so we
             # can detect wraps: a subsequent line with HIGHER body indent is
             # a continuation of the previous part, not a new part. (Used
@@ -274,6 +281,7 @@ def extract(html: str) -> ExtractApprops:
                 first_line_num=lines[buf_start_idx].line_num or 0,
                 last_page_idx=L.page_idx,
                 last_line_num=L.line_num or 0,
+                fund_page_idx=fund_page_idx,
             )
             result.approps.append(ap)
             buf_start_idx = None
@@ -333,6 +341,8 @@ def main():
             "last_line": a.last_line_num,
             "bill_language": a.bill_language,
             "source": "appropriation",
+            "chyr_page": -1,  # appropriations section has no chyr header
+            "fund_page": a.fund_page_idx,
         } for a in r.approps]
         df = pd.DataFrame(rows)
         df.to_csv(outputs / "enacted_approps.csv", index=False)

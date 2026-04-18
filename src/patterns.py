@@ -66,7 +66,7 @@ def is_fund_top(p_text: str) -> bool:
     m = LINE_NUM_RE.match(p_text)
     if not m:
         return False
-    return bool(FUND_TOP_RE.match(p_text[m.end():].strip()))
+    return bool(FUND_TOP_RE.match(m.group(2).strip()))
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ def is_chapter_year_header(p_text: str):
     m = LINE_NUM_RE.match(p_text)
     if not m:
         return None
-    cm = CHAPTER_YEAR_RE.match(p_text[m.end():].strip())
+    cm = CHAPTER_YEAR_RE.match(m.group(2).strip())
     return int(cm.group(1)) if cm else None
 
 
@@ -135,8 +135,13 @@ SCHEDULE_ROW_RE = re.compile(r"\.{2,}\s*\$?[\d,]+\s+\$?[\d,]+\s*$")
 
 # Subtotal / separator / schedule-marker lines to skip entirely
 SKIP_LINE_RE = re.compile(
-    r"^(Program account subtotal\b|All Funds\b|[-=]{5,}$|SCHEDULE\b)"
+    r"^(Program account subtotal\b|All Funds\b|[-=]{5,}$|SCHEDULE\b|"
+    r"Total of sub-schedule\b|sub-schedule\s*$)"
 )
+
+# Sub-schedule label on its own line (lowercase "sub-schedule", no other content).
+# Marks the opening of a tabular allocation block attached to the PRIOR reapprop.
+SUBSCHEDULE_LABEL_RE = re.compile(r"^sub-schedule\s*$", re.IGNORECASE)
 
 
 # Body-line starters used to stop fund-header accumulation — any line starting

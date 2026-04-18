@@ -151,3 +151,65 @@ BODY_LINE_START_RE = re.compile(
 def parse_int_amount(s: str) -> int:
     """Normalize "$X,XXX,XXX" or "X,XXX,XXX" to int."""
     return int(s.replace(",", "").replace("$", ""))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Agency header detection — for multi-agency bills (full ATL, etc.)
+# ──────────────────────────────────────────────────────────────────────────
+# Each page's unnumbered header block typically looks like:
+#    <page_number> <bill_code>
+#    <AGENCY NAME>
+#    AID TO LOCALITIES [- REAPPROPRIATIONS] YYYY-YY
+# The agency line is all-caps text that is NOT the bill title or the
+# STATE OF NEW YORK preamble. Agencies contain recognizable tokens like
+# DEPARTMENT / OFFICE / DIVISION / AUTHORITY / CORPORATION / UNIVERSITY /
+# MISCELLANEOUS / COUNCIL / BOARD / COMMISSION / STATE (in "STATE EDUCATION
+# DEPARTMENT" etc). We use inclusion-by-keyword + exclusion-by-bill-title.
+_AGENCY_KEYWORDS = re.compile(
+    r"\b(DEPARTMENT|OFFICE|DIVISION|AUTHORITY|CORPORATION|UNIVERSITY|"
+    r"MISCELLANEOUS|COUNCIL|BOARD|COMMISSION|ASSEMBLY|SENATE|SERVICES|"
+    r"COURT|JUDICIARY|GOVERNOR|SECRETARY|COMPTROLLER|ATTORNEY|EXECUTIVE|"
+    r"LEGISLATURE|AGENCY|PROGRAM)\b"
+)
+_BILL_TITLE_TOKENS = re.compile(
+    r"\b(AID TO|STATE OPERATIONS|CAPITAL PROJECTS|DEBT SERVICE|"
+    r"APPROPRIATIONS|REAPPROPRIATIONS|STATE OF NEW YORK|"
+    r"IN SENATE|IN ASSEMBLY|SECTION|BILL NUMBER)\b"
+)
+
+
+def looks_like_agency_header(text: str) -> bool:
+    """True if an unnumbered page-header line appears to name an agency
+    (vs a page number, bill title, STATE OF NEW YORK preamble, etc.)."""
+    t = text.strip()
+    if not t:
+        return False
+    # Must be primarily all-caps
+    letters = [c for c in t if c.isalpha()]
+    if not letters:
+        return False
+    if sum(1 for c in letters if c.isupper()) / len(letters) < 0.85:
+        return False
+    # Exclude bill-title tokens
+    if _BILL_TITLE_TOKENS.search(t):
+        return False
+    # Must contain at least one agency-like keyword
+    return bool(_AGENCY_KEYWORDS.search(t))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Section detection — appropriations vs reapproprations
+# ──────────────────────────────────────────────────────────────────────────
+# Bill title on every page reveals the section:
+#   "AID TO LOCALITIES   YYYY-YY"                 → appropriation
+#   "AID TO LOCALITIES - REAPPROPRIATIONS   YYYY-YY" → reapprop
+_SECTION_TITLE_RE = re.compile(r"^AID TO LOCALITIES", re.IGNORECASE)
+
+
+def section_of_title(text: str):
+    """Return 'reapprop' or 'appropriation' if the text is a bill-title page
+    header, else None."""
+    t = text.strip()
+    if not _SECTION_TITLE_RE.match(t):
+        return None
+    return "reapprop" if "REAPPROPRIATIONS" in t.upper() else "appropriation"

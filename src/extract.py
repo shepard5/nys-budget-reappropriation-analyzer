@@ -37,6 +37,8 @@ from patterns import (
     APPROP_ID_RE,
     BODY_LINE_START_RE,
     parse_int_amount,
+    looks_like_agency_header,
+    section_of_title,
 )
 
 
@@ -59,6 +61,7 @@ class Line:
 @dataclass
 class Reappropriation:
     # Structural context
+    agency: str              # e.g. "EDUCATION DEPARTMENT" (from page header)
     program: str
     fund: str                # joined with "; "  e.g. "General Fund; Local Assistance Account - 10000"
     chapter_year: int
@@ -79,8 +82,9 @@ class Reappropriation:
     global_p_end: int
 
     # Uniqueness key
-    def composite_key(self) -> Tuple[str, str, str, int, int]:
-        return (self.program, self.fund, self.approp_id, self.chapter_year, self.amending_year)
+    def composite_key(self) -> Tuple[str, str, str, str, int, int]:
+        return (self.agency, self.program, self.fund, self.approp_id,
+                self.chapter_year, self.amending_year)
 
 
 @dataclass
@@ -169,10 +173,16 @@ def extract(html: str) -> ExtractResult:
     )
 
     # Structural state
+    agency: str = ""
     program: str = ""
     fund_parts: List[str] = []       # accumulated 1-3 lines that form the fund
     chapter_year: int = 0
     amending_year: int = 0
+    # Bill section — one of None, "appropriation", "reapprop". Detected from
+    # the bill-title page-header line on each page. This extractor only emits
+    # reapprop records in the reapprop section; it processes the appropriations
+    # section inertly for state tracking but drops its body content.
+    section: Optional[str] = None
 
     # Buffer for the current reapprop being accumulated
     buf_start_idx: Optional[int] = None
@@ -187,8 +197,39 @@ def extract(html: str) -> ExtractResult:
             i += 1
             continue
 
-        # Skip unnumbered headers (page number, agency, bill title)
+        # Unnumbered lines are page-header content (page number, agency name,
+        # bill title). Check if it's an agency name or a section-title line
+        # and update state; otherwise skip.
         if L.line_num is None:
+            t_hdr = L.text.strip()
+            sec = section_of_title(t_hdr)
+            if sec is not None:
+                if sec != section:
+                    # New section — reset per-section state (but keep agency).
+                    section = sec
+                    program = ""
+                    fund_parts = []
+                    chapter_year = 0
+                    amending_year = 0
+                    buf_start_idx = None
+            elif t_hdr and looks_like_agency_header(t_hdr):
+                new_agency = re.sub(r"\s+", " ", t_hdr)
+                if new_agency != agency:
+                    agency = new_agency
+                    # New agency — reset program/fund/chyr/section state.
+                    program = ""
+                    fund_parts = []
+                    chapter_year = 0
+                    amending_year = 0
+                    buf_start_idx = None
+                    section = None
+            i += 1
+            continue
+
+        # If we're not in the reapprop section, DON'T emit reapprops. We still
+        # let structural detection updates run so that state is cleanly set
+        # when we enter the reapprop section.
+        if section != "reapprop":
             i += 1
             continue
 
@@ -361,6 +402,7 @@ def extract(html: str) -> ExtractResult:
 
             # Emit
             rr = Reappropriation(
+                agency=agency,
                 program=program,
                 fund="; ".join(fund_parts),
                 chapter_year=chapter_year,
@@ -431,6 +473,7 @@ def main():
             # appropriations) when generating insert PDFs.
             source_tag = "reapprop" if html_name == "enacted_25-26.html" else "executive"
             rows = [{
+                "agency": r.agency,
                 "program": r.program,
                 "fund": r.fund,
                 "chapter_year": r.chapter_year,

@@ -18,6 +18,8 @@ Inserts are produced for items with sfs_balance >= $1,000.
 
 import math
 from pathlib import Path
+from typing import Optional
+
 import pandas as pd
 
 
@@ -31,11 +33,22 @@ def round_up_to_1k(x: float) -> int:
     return int(math.ceil(x / 1000.0) * 1000)
 
 
-def load_sfs_lookup(agency: str = "EDUCATION DEPARTMENT") -> pd.DataFrame:
+def load_sfs_lookup(agency: Optional[str] = None) -> pd.DataFrame:
+    """Load SFS undisbursed-balance lookup.
+
+    If `agency` is given, filter to that agency (matches ATL Drops' `agency`
+    column). If None (default), load all agencies — required for full-ATL
+    runs. The returned DataFrame carries the agency key for multi-agency
+    joins.
+    """
     df = pd.read_excel(ROOT / "inputs" / "atl_drops_sfs.xlsx", sheet_name="ATL Drops")
-    df = df[df.agency == agency].copy()
+    if agency is not None:
+        df = df[df.agency == agency].copy()
+    else:
+        df = df.copy()
     # Normalize column names
-    df = df.rename(columns={"SFS Undisbursed Funds ": "sfs_balance"})
+    df = df.rename(columns={"SFS Undisbursed Funds ": "sfs_balance",
+                             "agency": "agency_s"})
     # Cast keys
     df["approp_id_s"] = df["appropriation id"].apply(
         lambda x: "" if pd.isna(x) else str(int(float(x)))
@@ -43,7 +56,7 @@ def load_sfs_lookup(agency: str = "EDUCATION DEPARTMENT") -> pd.DataFrame:
     df["chapter_year_i"] = df["chapter year"].fillna(0).astype(int)
     df["approp_amount_i"] = df["appropriation amount"].fillna(0).astype(int)
     df["reapprop_amount_i"] = df["reappropriation amount"].fillna(0).astype(int)
-    return df[["approp_id_s", "chapter_year_i", "approp_amount_i",
+    return df[["agency_s", "approp_id_s", "chapter_year_i", "approp_amount_i",
                "reapprop_amount_i", "sfs_balance"]].copy()
 
 
@@ -63,6 +76,7 @@ def join_sfs(comparison_df: pd.DataFrame, sfs: pd.DataFrame) -> pd.DataFrame:
     drops["chapter_year_i"] = drops["chapter_year"].astype(int)
     drops["approp_amount_i"] = drops["approp_amount"].astype(int)
     drops["reapprop_amount_i"] = drops["enacted_reapprop_amount"].astype(int)
+    drops["agency_s"] = drops["agency"].fillna("") if "agency" in drops.columns else ""
 
     # Multi-pass joining, per user's note: "mostly approp ID and chapter year,
     # but sometimes you have to mix it up". We try tighter keys first, then
@@ -82,28 +96,31 @@ def join_sfs(comparison_df: pd.DataFrame, sfs: pd.DataFrame) -> pd.DataFrame:
         ).fillna("")
         return merged
 
-    # PASS A: (approp_id, chapter_year, approp_amount) — tightest for ID'd items
+    # Scope matches to the drop's agency. ATL Drops has different agencies
+    # that might share approp IDs coincidentally; include agency in every key.
+    # PASS A: (agency, approp_id, chapter_year, approp_amount) — tightest
     id_items = drops[drops.approp_id_s != ""].copy()
     a = _try_merge(id_items, id_sfs,
-                    ["approp_id_s", "chapter_year_i", "approp_amount_i"], "id+chyr+amt")
+                    ["agency_s", "approp_id_s", "chapter_year_i", "approp_amount_i"],
+                    "agency+id+chyr+amt")
     unmatched = a[a.sfs_balance.isna()].drop(columns=["sfs_balance", "sfs_match_method"])
     matched = a[a.sfs_balance.notna()]
 
-    # PASS B: (approp_id, chapter_year) — relax approp_amount
+    # PASS B: (agency, approp_id, chapter_year) — relax approp_amount
     b = _try_merge(unmatched, id_sfs,
-                    ["approp_id_s", "chapter_year_i"], "id+chyr")
+                    ["agency_s", "approp_id_s", "chapter_year_i"], "agency+id+chyr")
     unmatched = b[b.sfs_balance.isna()].drop(columns=["sfs_balance", "sfs_match_method"])
     matched = pd.concat([matched, b[b.sfs_balance.notna()]], ignore_index=True)
 
-    # PASS C: (approp_id, approp_amount) — if chapter year differs but same size
+    # PASS C: (agency, approp_id, approp_amount) — chapter year mismatch
     c = _try_merge(unmatched, id_sfs,
-                    ["approp_id_s", "approp_amount_i"], "id+amt")
+                    ["agency_s", "approp_id_s", "approp_amount_i"], "agency+id+amt")
     unmatched = c[c.sfs_balance.isna()].drop(columns=["sfs_balance", "sfs_match_method"])
     matched = pd.concat([matched, c[c.sfs_balance.notna()]], ignore_index=True)
 
-    # PASS D: (approp_id) alone — rare, last resort for ID'd items
+    # PASS D: (agency, approp_id) alone — last resort for ID'd items
     d = _try_merge(unmatched, id_sfs,
-                    ["approp_id_s"], "id_only")
+                    ["agency_s", "approp_id_s"], "agency+id_only")
     unmatched = d[d.sfs_balance.isna()].drop(columns=["sfs_balance", "sfs_match_method"])
     matched = pd.concat([matched, d[d.sfs_balance.notna()]], ignore_index=True)
 
@@ -111,15 +128,15 @@ def join_sfs(comparison_df: pd.DataFrame, sfs: pd.DataFrame) -> pd.DataFrame:
     id_final = pd.concat([matched, unmatched.assign(sfs_balance=pd.NA, sfs_match_method="")],
                           ignore_index=True)
 
-    # NaN-ID items: match on (chapter_year, approp_amount, reapprop_amount)
+    # NaN-ID items: match on (agency, chapter_year, approp_amount, reapprop_amount)
     noid_items = drops[drops.approp_id_s == ""].copy()
     noid = _try_merge(noid_items, noid_sfs,
-                      ["chapter_year_i", "approp_amount_i", "reapprop_amount_i"],
-                      "noid+chyr+amt+re")
+                      ["agency_s", "chapter_year_i", "approp_amount_i", "reapprop_amount_i"],
+                      "agency+noid+chyr+amt+re")
 
     merged = pd.concat([id_final, noid], ignore_index=True)
     # Drop helper cols
-    merged = merged.drop(columns=["approp_id_s", "chapter_year_i",
+    merged = merged.drop(columns=["agency_s", "approp_id_s", "chapter_year_i",
                                   "approp_amount_i", "reapprop_amount_i"])
     merged["sfs_rounded"] = merged["sfs_balance"].apply(round_up_to_1k)
     merged["insert_eligible"] = merged["sfs_rounded"] >= 1000
@@ -128,8 +145,11 @@ def join_sfs(comparison_df: pd.DataFrame, sfs: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     comp = pd.read_csv(ROOT / "outputs" / "comparison.csv")
-    sfs = load_sfs_lookup("EDUCATION DEPARTMENT")
-    print(f"SFS rows for EDUCATION DEPARTMENT: {len(sfs)}")
+    # Load all-agency SFS data — the (agency, ...) join key ensures we only
+    # match each drop to its own agency's rows.
+    sfs = load_sfs_lookup(agency=None)
+    print(f"SFS rows loaded (all agencies): {len(sfs)}  "
+          f"agencies: {sfs.agency_s.nunique()}")
 
     merged = join_sfs(comp, sfs)
     out = ROOT / "outputs" / "dropped_with_sfs.csv"

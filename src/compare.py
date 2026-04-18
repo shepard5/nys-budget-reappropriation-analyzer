@@ -33,9 +33,15 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _agency(row) -> str:
+    """Safe agency accessor for backward-compat with records lacking `agency`."""
+    return getattr(row, "agency", "") or ""
+
+
 def key_full(row) -> Tuple:
     """Primary match key — excludes reapprop_amount so modified items still match."""
     return (
+        _agency(row),
         row.program,
         row.fund,
         "" if pd.isna(row.approp_id) else str(int(float(row.approp_id))),
@@ -49,6 +55,7 @@ def key_no_id(row) -> Tuple:
     """Fallback for NaN-approp_id items — no approp_id, add reapprop_amount for
     tighter matching (since bill_language might not match identically)."""
     return (
+        _agency(row),
         row.program,
         row.fund,
         int(row.chapter_year),
@@ -103,7 +110,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "status": status,
                 "enacted_idx": i,
                 "exec_idx": pick,
-                "program": row.program,
+                "agency": _agency(row), "program": row.program,
                 "fund": row.fund,
                 "chapter_year": int(row.chapter_year),
                 "amending_year": int(row.amending_year),
@@ -124,7 +131,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "status": "dropped",
                 "enacted_idx": i,
                 "exec_idx": -1,
-                "program": row.program,
+                "agency": _agency(row), "program": row.program,
                 "fund": row.fund,
                 "chapter_year": int(row.chapter_year),
                 "amending_year": int(row.amending_year),
@@ -179,7 +186,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "status": status,
                 "enacted_idx": i,
                 "exec_idx": pick,
-                "program": row.program,
+                "agency": _agency(row), "program": row.program,
                 "fund": row.fund,
                 "chapter_year": int(row.chapter_year),
                 "amending_year": int(row.amending_year),
@@ -200,7 +207,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "status": "dropped",
                 "enacted_idx": i,
                 "exec_idx": -1,
-                "program": row.program,
+                "agency": _agency(row), "program": row.program,
                 "fund": row.fund,
                 "chapter_year": int(row.chapter_year),
                 "amending_year": int(row.amending_year),
@@ -225,7 +232,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
             "status": "new_in_exec",
             "enacted_idx": -1,
             "exec_idx": j,
-            "program": row.program,
+            "agency": _agency(row), "program": row.program,
             "fund": row.fund,
             "chapter_year": int(row.chapter_year),
             "amending_year": int(row.amending_year),

@@ -46,14 +46,14 @@ _PG_RANGE_RE = re.compile(r"pg(\d+)-(\d+)")
 
 def _pdf_first_page(symlink_path: Path) -> int:
     """Resolve the symlink target's filename and extract its starting PDF
-    page number. Raises if the filename doesn't encode the range."""
+    page number. LBDC-editor filenames encode the range as "...pg<START>-
+    <END>-...". For full budget bills (no pg-range in the filename) we
+    default to 1 — the PDF contains the whole bill starting at page 1."""
     target = os.path.realpath(symlink_path)
     m = _PG_RANGE_RE.search(target)
-    if not m:
-        raise ValueError(
-            f"Input PDF filename doesn't encode pg-range: {target}"
-        )
-    return int(m.group(1))
+    if m:
+        return int(m.group(1))
+    return 1
 
 
 # Initialized lazily in main() to avoid import-time file access.
@@ -147,12 +147,16 @@ def main():
     # "pg<START>-<END>" so the pipeline is portable across budget years.
     global EXEC_PDF_PAGE_OFFSET, ENACTED_PDF_PAGE_OFFSET
     EXEC_PDF_PAGE_OFFSET = _pdf_first_page(ROOT / "inputs" / "executive_26-27.pdf")
-    ENACTED_PDF_PAGE_OFFSET = {
-        "reapprop": _pdf_first_page(ROOT / "inputs" / "enacted_25-26.pdf"),
-    }
+    reapprop_offset = _pdf_first_page(ROOT / "inputs" / "enacted_25-26.pdf")
+    ENACTED_PDF_PAGE_OFFSET = {"reapprop": reapprop_offset}
     approps_symlink = ROOT / "inputs" / "enacted_25-26_approps.pdf"
     if approps_symlink.exists():
+        # Two-PDF setup (Education scope): separate pg-ranges.
         ENACTED_PDF_PAGE_OFFSET["appropriation"] = _pdf_first_page(approps_symlink)
+    else:
+        # Single-PDF setup (full-ATL scope): both sections live in the same
+        # PDF, so appropriation records use the same PDF offset as reapprops.
+        ENACTED_PDF_PAGE_OFFSET["appropriation"] = reapprop_offset
     print(f"[*] PDF page offsets: exec={EXEC_PDF_PAGE_OFFSET}  "
           f"enacted={ENACTED_PDF_PAGE_OFFSET}")
 
@@ -248,20 +252,31 @@ def main():
     # of Ed Account shows up on enacted approps pg 43 AND reapprops pg 117).
     # For `before_next_fund`, we want the next fund that appears AFTER the
     # survivor's fund IN THE SAME SECTION.
-    enacted_fund_order_by_source: Dict[str, List] = {"appropriation": [], "reapprop": []}
-    enacted_program_order_by_source: Dict[str, List] = {"appropriation": [], "reapprop": []}
-    _seen_by_source: Dict[str, set] = {"appropriation": set(), "reapprop": set()}
-    _seen_prog_by_source: Dict[str, set] = {"appropriation": set(), "reapprop": set()}
+    # Keyed by (agency, source) so multi-agency bills scope lookups correctly:
+    # a survivor's "next program in same program_order" search must stay
+    # within the same agency.
+    enacted_fund_order_by_src: Dict[Tuple[str, str], List] = {}
+    enacted_program_order_by_src: Dict[Tuple[str, str], List] = {}
+    _seen_fund: Dict[Tuple[str, str], set] = {}
+    _seen_prog: Dict[Tuple[str, str], set] = {}
+    has_agency = "agency" in enacted.columns
     for idx in enacted_order:
         r = enacted.loc[idx]
+        agency = r.agency if has_agency else ""
         src = r.source if "source" in enacted.columns else "reapprop"
-        key = (r.program, r.fund)
-        if key not in _seen_by_source[src]:
-            _seen_by_source[src].add(key)
-            enacted_fund_order_by_source[src].append(key)
-        if r.program not in _seen_prog_by_source[src]:
-            _seen_prog_by_source[src].add(r.program)
-            enacted_program_order_by_source[src].append(r.program)
+        k = (agency, src)
+        if k not in enacted_fund_order_by_src:
+            enacted_fund_order_by_src[k] = []
+            enacted_program_order_by_src[k] = []
+            _seen_fund[k] = set()
+            _seen_prog[k] = set()
+        fkey = (r.program, r.fund)
+        if fkey not in _seen_fund[k]:
+            _seen_fund[k].add(fkey)
+            enacted_fund_order_by_src[k].append(fkey)
+        if r.program not in _seen_prog[k]:
+            _seen_prog[k].add(r.program)
+            enacted_program_order_by_src[k].append(r.program)
 
     # For each structural group in exec, record the FIRST reapprop's position.
     # The "header" for that group conceptually sits just before that position.
@@ -368,8 +383,9 @@ def main():
         #    in exec. This keeps the insert in its semantically correct slot
         #    within the program.
         if fund_key not in exec_fund_first_pos:
+            surv_agency = surv.agency if has_agency else ""
             surv_src = surv.source if "source" in enacted.columns else "reapprop"
-            surv_fund_order = enacted_fund_order_by_source.get(surv_src, [])
+            surv_fund_order = enacted_fund_order_by_src.get((surv_agency, surv_src), [])
             try:
                 pos_in_order = surv_fund_order.index(fund_key)
                 next_fund_key = None
@@ -432,8 +448,9 @@ def main():
         #    above where OFFICE OF PREKINDERGARTEN starts in exec. This rule
         #    is universally true — a dropped-program's reapprops always slot
         #    into the same program-ordering position in the target section.
+        surv_agency = surv.agency if has_agency else ""
         surv_src = surv.source if "source" in enacted.columns else "reapprop"
-        surv_prog_order = enacted_program_order_by_source.get(surv_src, [])
+        surv_prog_order = enacted_program_order_by_src.get((surv_agency, surv_src), [])
         if s_prog in surv_prog_order:
             pos = surv_prog_order.index(s_prog)
             for later_prog in surv_prog_order[pos + 1:]:

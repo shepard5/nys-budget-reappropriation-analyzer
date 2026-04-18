@@ -44,6 +44,8 @@ from patterns import (
     SKIP_LINE_RE,
     BODY_LINE_START_RE,
     parse_int_amount,
+    looks_like_agency_header,
+    section_of_title,
 )
 
 
@@ -64,8 +66,9 @@ def _body_indent(raw: str) -> int:
 
 @dataclass
 class Appropriation:
-    program: str
-    fund: str
+    agency: str = ""
+    program: str = ""
+    fund: str = ""
     chapter_year: int = APPROPS_CHAPTER_YEAR
     amending_year: int = 0
     approp_id: str = ""
@@ -96,10 +99,14 @@ def extract(html: str) -> ExtractApprops:
         n_body=sum(1 for L in lines if L.line_num is not None),
     )
 
+    agency: str = ""
     program: str = ""
     fund_parts: List[str] = []
     buf_start_idx: Optional[int] = None
-    seen_first_program_on_page = False  # resets per agency first-page; used to skip header schedule
+    # Section — "appropriation" or "reapprop". We only emit appropriations
+    # records in the "appropriation" section of each agency.
+    section: Optional[str] = None
+    seen_first_program_on_page = False  # legacy flag, no longer relied on
 
     i = 0
     while i < len(lines):
@@ -108,7 +115,29 @@ def extract(html: str) -> ExtractApprops:
             i += 1
             continue
         if L.line_num is None:
-            # Unnumbered headers (page number, agency name, bill title) — skip
+            t_hdr = L.text.strip()
+            sec = section_of_title(t_hdr)
+            if sec is not None:
+                if sec != section:
+                    section = sec
+                    program = ""
+                    fund_parts = []
+                    buf_start_idx = None
+            elif t_hdr and looks_like_agency_header(t_hdr):
+                new_agency = re.sub(r"\s+", " ", t_hdr)
+                if new_agency != agency:
+                    agency = new_agency
+                    program = ""
+                    fund_parts = []
+                    buf_start_idx = None
+                    section = None
+            i += 1
+            continue
+
+        # Only emit appropriations in the appropriation section. In reapprop
+        # pages, skip body lines so the terminator regex doesn't match `(re. $X)`
+        # lines as false-positive appropriations.
+        if section != "appropriation":
             i += 1
             continue
 
@@ -233,6 +262,7 @@ def extract(html: str) -> ExtractApprops:
             bill_language = "\n".join(bill_lines)
 
             ap = Appropriation(
+                agency=agency,
                 program=program,
                 fund="; ".join(fund_parts),
                 chapter_year=APPROPS_CHAPTER_YEAR,
@@ -259,15 +289,24 @@ def main():
     outputs = ROOT / "outputs"
     outputs.mkdir(exist_ok=True)
 
-    html_path = cache / "enacted_25-26_approps.html"
-    if not html_path.exists():
-        print(f"[!] Missing {html_path} — run upload_and_cache.py first")
+    # Prefer the appropriations-only slice (Education scope) if present;
+    # otherwise fall back to the full enacted HTML (full-ATL scope), in which
+    # case the extractor filters internally to approps pages.
+    approps_only = cache / "enacted_25-26_approps.html"
+    full_bill = cache / "enacted_25-26.html"
+    if approps_only.exists():
+        html_path = approps_only
+    elif full_bill.exists():
+        html_path = full_bill
+    else:
+        print(f"[!] Missing {approps_only} and {full_bill} — "
+              f"run upload_and_cache.py first")
         return
 
     html = html_path.read_text()
     r = extract(html)
     print(f"\n{'='*72}")
-    print(f"enacted_25-26_approps.html")
+    print(f"{html_path.name}")
     print(f"{'='*72}")
     print(f"  lines total : {r.n_lines}")
     print(f"  body lines  : {r.n_body}")
@@ -276,6 +315,7 @@ def main():
     try:
         import pandas as pd
         rows = [{
+            "agency": a.agency,
             "program": a.program,
             "fund": a.fund,
             "chapter_year": a.chapter_year,

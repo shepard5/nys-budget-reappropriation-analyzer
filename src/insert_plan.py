@@ -47,6 +47,78 @@ ENACTED_PDF_PAGE_OFFSET = {
 }
 
 
+def _compute_exec_fund_header_positions() -> Dict:
+    """
+    Walk the cached executive HTML and locate the <p> index where each
+    (program, fund) block's FUND-FAMILY line lives (e.g., "Special Revenue
+    Funds - Federal"). Used for `before_next_fund` anchor placement: the
+    label should sit ABOVE the fund-header lines of the next fund, not
+    between that fund's chyr header and body.
+
+    Returns dict keyed by (program, fund) -> {
+        "page_html": int,
+        "p_idx": int,          # index of fund-family <p> within the page
+        "line_num": int,       # visible line num of fund-family line
+    }
+    """
+    from bs4 import BeautifulSoup
+    cache_html = ROOT / "cache" / "executive_26-27.html"
+    if not cache_html.exists():
+        return {}
+    soup = BeautifulSoup(cache_html.read_text(), "lxml")
+    pages = soup.find_all("div", class_="page")
+
+    from patterns import PROGRAM_RE, FUND_TOP_RE, CHAPTER_YEAR_RE, LINE_NUM_RE
+
+    result: Dict = {}
+    current_program = ""
+    current_fund_parts: List[str] = []
+    for page_idx, page in enumerate(pages):
+        ps = page.find_all("p")
+        for p_idx, p in enumerate(ps):
+            raw = p.get_text()
+            if not raw.strip():
+                continue
+            m = LINE_NUM_RE.match(raw)
+            if not m:
+                continue
+            line_num = int(m.group(1))
+            t = m.group(2).strip()
+            if PROGRAM_RE.match(t):
+                current_program = t
+                current_fund_parts = []
+                continue
+            if FUND_TOP_RE.match(t):
+                # Start of a new fund block — record this <p> as the fund-family
+                # position. Then accumulate the next 1-2 sub-fund lines to build
+                # the full fund string.
+                fund_family_pos = {"page_html": page_idx, "p_idx": p_idx, "line_num": line_num}
+                current_fund_parts = [t]
+                # Peek ahead within same page for sub-fund parts.
+                j = p_idx + 1
+                while j < len(ps) and len(current_fund_parts) < 3:
+                    pj = ps[j]
+                    tj_raw = pj.get_text()
+                    if not tj_raw.strip():
+                        j += 1
+                        continue
+                    mj = LINE_NUM_RE.match(tj_raw)
+                    if not mj:
+                        j += 1
+                        continue
+                    tj = mj.group(2).strip()
+                    if (PROGRAM_RE.match(tj) or FUND_TOP_RE.match(tj) or
+                            CHAPTER_YEAR_RE.match(tj)):
+                        break
+                    current_fund_parts.append(tj)
+                    j += 1
+                if current_program and current_fund_parts:
+                    key = (current_program, "; ".join(current_fund_parts))
+                    if key not in result:
+                        result[key] = fund_family_pos
+    return result
+
+
 def main():
     # Enacted is reapprops + appropriations, concatenated in the same order
     # compare.py used (reapprops first, then approps) so enacted_idx aligns.
@@ -61,6 +133,10 @@ def main():
     executive = pd.read_csv(ROOT / "outputs" / "executive_reapprops.csv").reset_index(drop=True)
     comp = pd.read_csv(ROOT / "outputs" / "comparison.csv")
     sfs = pd.read_csv(ROOT / "outputs" / "dropped_with_sfs.csv")
+
+    # Precompute exact fund-header positions in exec HTML for precise
+    # `before_next_fund` anchor placement.
+    exec_fund_header_pos = _compute_exec_fund_header_positions()
 
     # Build match map: enacted_idx -> exec_idx (only continued/modified)
     matches = comp[comp.status.isin(["continued", "modified"])]
@@ -125,15 +201,21 @@ def main():
 
     # Ordered list of unique (program, fund) in ENACTED doc order — used to
     # find the "next fund" after a missing-in-exec fund, for label placement.
-    # Uses the corrected enacted_order (appropriation → reapprop).
-    enacted_fund_order: List = []
-    seen_funds = set()
+    # Built per-source, because the appropriations and reapprops sections are
+    # ORDERED INDEPENDENTLY within the 25-26 bill: a fund might appear in
+    # both sections but at different relative positions (e.g. PK Federal Dept
+    # of Ed Account shows up on enacted approps pg 43 AND reapprops pg 117).
+    # For `before_next_fund`, we want the next fund that appears AFTER the
+    # survivor's fund IN THE SAME SECTION.
+    enacted_fund_order_by_source: Dict[str, List] = {"appropriation": [], "reapprop": []}
+    _seen_by_source: Dict[str, set] = {"appropriation": set(), "reapprop": set()}
     for idx in enacted_order:
         r = enacted.loc[idx]
+        src = r.source if "source" in enacted.columns else "reapprop"
         key = (r.program, r.fund)
-        if key not in seen_funds:
-            seen_funds.add(key)
-            enacted_fund_order.append(key)
+        if key not in _seen_by_source[src]:
+            _seen_by_source[src].add(key)
+            enacted_fund_order_by_source[src].append(key)
 
     # For each structural group in exec, record the FIRST reapprop's position.
     # The "header" for that group conceptually sits just before that position.
@@ -236,24 +318,36 @@ def main():
 
         # 4. Survivor's FUND is missing from exec entirely — place the label
         #    just before the FIRST reapprop of the NEXT fund (in enacted doc
-        #    order, same program) that still exists in exec. This keeps the
-        #    insert in its semantically correct slot within the program.
+        #    order, same source section + same program) that still exists
+        #    in exec. This keeps the insert in its semantically correct slot
+        #    within the program.
         if fund_key not in exec_fund_first_pos:
+            surv_src = surv.source if "source" in enacted.columns else "reapprop"
+            surv_fund_order = enacted_fund_order_by_source.get(surv_src, [])
             try:
-                pos_in_order = enacted_fund_order.index(fund_key)
+                pos_in_order = surv_fund_order.index(fund_key)
                 next_fund_key = None
-                for later_key in enacted_fund_order[pos_in_order + 1:]:
+                for later_key in surv_fund_order[pos_in_order + 1:]:
                     if later_key[0] != s_prog:
                         break  # left the program
                     if later_key in exec_fund_first_pos:
                         next_fund_key = later_key
                         break
                 if next_fund_key is not None:
-                    pg, ln = exec_fund_first_pos[next_fund_key]
+                    # Prefer the exact fund-family line position if we have it
+                    # (precomputed from exec HTML); otherwise fall back to
+                    # (first-reapprop line - 1) as before.
+                    hdr = exec_fund_header_pos.get(next_fund_key)
+                    if hdr is not None:
+                        pg = hdr["page_html"]
+                        ln = max(hdr["line_num"] - 1, 0)
+                    else:
+                        pg, first_ln = exec_fund_first_pos[next_fund_key]
+                        ln = max(first_ln - 1, 0)
                     return {
                         "exec_idx": None,
                         "exec_page_html": pg,
-                        "exec_line": max(ln - 1, 0),
+                        "exec_line": ln,
                         "exec_page_pdf": pg + EXEC_PDF_PAGE_OFFSET,
                         "anchor_kind": "before_next_fund",
                     }, pg + EXEC_PDF_PAGE_OFFSET

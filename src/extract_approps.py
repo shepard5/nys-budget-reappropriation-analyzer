@@ -27,10 +27,24 @@ from typing import List, Optional
 
 from bs4 import BeautifulSoup
 
-# Reuse helpers from the reapprop extractor.
+# Reuse the line-walker from extract.py + shared regexes from patterns.py
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
-from extract import walk_html, Line, LINE_NUM_RE, FUND_TOP_RE, parse_int_amount
+from extract import walk_html, Line
+from patterns import (
+    LINE_NUM_RE,
+    FUND_TOP_RE,
+    PROGRAM_WITH_AMOUNT_RE,
+    PROGRAM_PLAIN_RE,
+    PROGRAM_CONT_RE,
+    PROGRAM_CAPS_LINE_RE,
+    APPROP_ID_RE,
+    TERM_AMOUNT_RE,
+    SCHEDULE_ROW_RE,
+    SKIP_LINE_RE,
+    BODY_LINE_START_RE,
+    parse_int_amount,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,44 +66,7 @@ class Appropriation:
     last_line_num: int = 0
 
 
-# Program header with trailing amount, all on one line
-PROGRAM_WITH_AMOUNT_RE = re.compile(
-    r"^([A-Z][A-Z0-9 ,&'\-/]*\s+PROGRAM)\s*\.{2,}\s*\$?[\d,]+\s*$"
-)
-PROGRAM_PLAIN_RE = re.compile(
-    r"^([A-Z][A-Z0-9 ,&'\-/]*\s+PROGRAM)\s*$"
-)
-# Continuation-line variant: previous line ends in all-caps words (no PROGRAM),
-# current line starts with "PROGRAM ....... <amount>"
-PROGRAM_CONT_RE = re.compile(
-    r"^PROGRAM\s*\.{2,}\s*\$?[\d,]+\s*$"
-)
-PROGRAM_CAPS_LINE_RE = re.compile(
-    r"^[A-Z][A-Z0-9 ,&'\-/]*[A-Z]\s*$"
-)
-
-# Approp ID: `(XXXXX)` — 5 digits in parens
-APPROP_ID_RE = re.compile(r"\((\d{5})\)")
-
-# Terminator anchors. On a body line, the appropriation ends when a
-# dollar-amount appears with no further text. Patterns:
-#   "... (21713) ............................................... 72,100,000"
-#   "... (56145) ................................. 500,000"
-#   "BRIDGES ......................................... 50,000"          ← no id
-#   "(23411) ... 1,843,000"                                              ← inline
-# Capture the final number preceded by dots.
-TERM_AMOUNT_RE = re.compile(r"\.{2,}\s*\$?([\d,]+)\s*$")
-
-# Schedule-table rows have TWO dollar amounts (APPROPRIATIONS + REAPPROPRIATIONS
-# columns), preceded by dots. Skip them.
-SCHEDULE_ROW_RE = re.compile(
-    r"\.{2,}\s*\$?[\d,]+\s+\$?[\d,]+\s*$"
-)
-
-# Subtotal / separator lines — skip entirely.
-SKIP_LINE_RE = re.compile(
-    r"^(Program account subtotal\b|All Funds\b|[-=]{5,}$|SCHEDULE\b)"
-)
+# Structural regexes imported from patterns.py above.
 
 
 @dataclass
@@ -164,7 +141,11 @@ def extract(html: str) -> ExtractApprops:
 
         # Fund top-level
         if FUND_TOP_RE.match(t):
-            fund_parts = [t]
+            # Normalize whitespace when storing fund parts — PDF justification
+            # in the approps section sometimes produces double-spaces which
+            # would otherwise break fund-key equality against the reapprop
+            # section's single-spaced strings.
+            fund_parts = [re.sub(r"\s+", " ", t)]
             j = i + 1
             while j < len(lines) and len(fund_parts) < 3:
                 Lj = lines[j]
@@ -177,11 +158,7 @@ def extract(html: str) -> ExtractApprops:
                 if FUND_TOP_RE.match(tj):
                     break
                 # Body line signal
-                if re.match(
-                    r"^(For\b|By\b|The\s+appropriations?\s+made\s+by\b|"
-                    r"Notwithstanding\b|Provided\b|Of\s+the\b|Aid\s+to\b)",
-                    tj, re.IGNORECASE,
-                ):
+                if BODY_LINE_START_RE.match(tj):
                     break
                 if TERM_AMOUNT_RE.search(tj):
                     break
@@ -189,7 +166,7 @@ def extract(html: str) -> ExtractApprops:
                 # this line belongs to a program header, not the fund
                 if PROGRAM_CAPS_LINE_RE.match(tj):
                     break
-                fund_parts.append(tj)
+                fund_parts.append(re.sub(r"\s+", " ", tj))
                 j += 1
             buf_start_idx = None
             i = j

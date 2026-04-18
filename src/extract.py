@@ -26,6 +26,19 @@ from typing import List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 
+from patterns import (
+    LINE_NUM_RE,
+    PROGRAM_RE,
+    FUND_TOP_RE,
+    CHAPTER_YEAR_RE,
+    CHAPTER_YEAR_CONT_RE,
+    RE_AMOUNT_RE,
+    DOTS_AMOUNT_RE,
+    APPROP_ID_RE,
+    BODY_LINE_START_RE,
+    parse_int_amount,
+)
+
 
 # =============================================================================
 # DATA MODELS
@@ -85,7 +98,6 @@ class ExtractResult:
 # LINE WALKING
 # =============================================================================
 
-LINE_NUM_RE = re.compile(r"^\s{0,3}(\d{1,3})\s+(.*)$")
 BLANK_STYLE_RE = re.compile(r"min-height")
 
 
@@ -128,41 +140,8 @@ def walk_html(html: str) -> List[Line]:
 # STRUCTURAL MARKERS
 # =============================================================================
 
-# "PROGRAM" all-caps line — the last word must be PROGRAM
-PROGRAM_RE = re.compile(r"^[A-Z][A-Z0-9 ,&'\-/]*\s+PROGRAM$")
-
-# Top-level fund header — first line of a fund block
-FUND_TOP_RE = re.compile(
-    r"^(General Fund|Special Revenue Funds - Federal|Special Revenue Funds - Other|"
-    r"Capital Projects Funds|Enterprise Funds|Fiduciary Funds)$"
-)
-
-# Chapter-year header — two forms:
-#   Form A: "By chapter N, section M, [of part X,] of the laws of YYYY[, as {amended|added} by chapter ... of the laws of ZZZZ]:"
-#   Form B: "The appropriation[s] made by chapter N, section M, of the laws of YYYY,"  (followed on next line
-#           by "[is|are] hereby amended and reappropriated to read:")
-# Chapter/section numbers vary. We capture base year + optional amending year.
-CHAPTER_YEAR_RE = re.compile(
-    r"^(?:By|The\s+appropriations?\s+made\s+by)\s+chapter\s+\d+"
-    r".*?of\s+the\s+laws\s+of\s+(\d{4})"
-    r"(?:.*?as\s+(?:amended|added)\s+by\s+chapter\s+\d+.*?of\s+the\s+laws\s+of\s+(\d{4}))?",
-    re.IGNORECASE,
-)
-
-# Reapprop terminator: `(re. $<amount>)` or `(re. <amount>)`
-RE_AMOUNT_RE = re.compile(r"\(re\.\s*\$?([\d,]+)\s*\)")
-
-# Approp ID: `(XXXXX)` — 5 digits in parens
-APPROP_ID_RE = re.compile(r"\((\d{5})\)")
-
-# Original amount pattern — dots then number (e.g., "..... 54,000,000")
-# We want the LAST such match on the terminator line before "(re.", and if not
-# there, check the previous non-blank line.
-DOTS_AMOUNT_RE = re.compile(r"\.{2,}\s*\$?([\d,]+)")
-
-
-def parse_int_amount(s: str) -> int:
-    return int(s.replace(",", "").replace("$", ""))
+# Structural regexes (PROGRAM_RE, FUND_TOP_RE, CHAPTER_YEAR_RE, etc.) and
+# parse_int_amount() are imported from patterns.py above.
 
 
 # =============================================================================
@@ -221,7 +200,7 @@ def extract(html: str) -> ExtractResult:
         # Sub-fund lines follow immediately (possibly across a page break),
         # separated from a chapter-year header by a blank.
         if FUND_TOP_RE.match(t):
-            fund_parts = [t]
+            fund_parts = [re.sub(r"\s+", " ", t)]
             j = i + 1
             while j < len(lines) and len(fund_parts) < 3:
                 Lj = lines[j]
@@ -237,12 +216,14 @@ def extract(html: str) -> ExtractResult:
                 if PROGRAM_RE.match(tj) or FUND_TOP_RE.match(tj):
                     break
                 # Body content (reapprop text) — stop collecting
-                if re.match(r"^(For\b|By\b|The\s+appropriations?\s+made\s+by\b)", tj, re.IGNORECASE):
+                if BODY_LINE_START_RE.match(tj):
                     break
                 if RE_AMOUNT_RE.search(tj):
                     break
-                # Otherwise, it's a continuation of the fund header
-                fund_parts.append(tj)
+                # Otherwise, it's a continuation of the fund header. Collapse
+                # internal whitespace so the same fund name always produces the
+                # same string (PDF justification sometimes inserts extra spaces).
+                fund_parts.append(re.sub(r"\s+", " ", tj))
                 j += 1
             chapter_year = 0
             amending_year = 0
@@ -270,9 +251,7 @@ def extract(html: str) -> ExtractResult:
                     tj = Lj.text.strip()
                     is_continuation = (
                         tj.endswith(":") or
-                        bool(re.match(
-                            r"^(section\s+\d+|part\s+[A-Z]+|hereby|is\s+hereby|"
-                            r"are\s+hereby|and\s+)", tj, re.IGNORECASE))
+                        bool(CHAPTER_YEAR_CONT_RE.match(tj))
                     )
                     if is_continuation:
                         if amending_year == 0:

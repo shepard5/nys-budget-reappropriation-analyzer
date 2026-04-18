@@ -21,7 +21,6 @@ Usage:
 """
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import List, Dict, Optional, Set
@@ -29,6 +28,12 @@ from typing import List, Dict, Optional, Set
 from bs4 import BeautifulSoup
 
 from lbdc import LBDCClient, LBDCDocument
+from patterns import (
+    LINE_NUM_RE,
+    line_num_of,
+    is_chapter_year_header,
+    is_fund_top,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,49 +46,12 @@ INSERTS_DIR = OUTPUTS / "inserts"
 # HTML helpers
 # ---------------------------------------------------------------------------
 
-LINE_NUM_RE = re.compile(r"^\s{0,3}(\d{1,3})\s+")
-CHAPTER_YEAR_RE = re.compile(
-    r"^(?:By|The\s+appropriations?\s+made\s+by)\s+chapter\s+\d+"
-    r".*?of\s+the\s+laws\s+of\s+(\d{4})"
-    r"(?:.*?as\s+(?:amended|added)\s+by\s+chapter\s+\d+.*?of\s+the\s+laws\s+of\s+(\d{4}))?",
-    re.IGNORECASE,
-)
-FUND_TOP_RE = re.compile(
-    r"^(General Fund|Special Revenue Funds - Federal|Special Revenue Funds - Other|"
-    r"Capital Projects Funds|Enterprise Funds|Fiduciary Funds)$"
-)
-
-
 def slice_html_pages(full_html: str, start_html_idx: int, end_html_idx: int) -> str:
     """Extract <div class="page"> elements for the given HTML page index range (inclusive)."""
     soup = BeautifulSoup(full_html, "lxml")
     pages = soup.find_all("div", class_="page")
     selected = pages[start_html_idx:end_html_idx + 1]
     return "".join(str(p) for p in selected)
-
-
-def line_num_of(p_text: str) -> Optional[int]:
-    m = LINE_NUM_RE.match(p_text)
-    return int(m.group(1)) if m else None
-
-
-def is_chapter_year_header(p_text: str) -> Optional[int]:
-    """Return the chapter year if this <p> starts a chapter-year header, else None."""
-    # Strip line number prefix
-    m = LINE_NUM_RE.match(p_text)
-    if not m:
-        return None
-    after = p_text[m.end():].strip()
-    cm = CHAPTER_YEAR_RE.match(after)
-    return int(cm.group(1)) if cm else None
-
-
-def is_fund_top(p_text: str) -> bool:
-    m = LINE_NUM_RE.match(p_text)
-    if not m:
-        return False
-    after = p_text[m.end():].strip()
-    return bool(FUND_TOP_RE.match(after))
 
 
 # ---------------------------------------------------------------------------

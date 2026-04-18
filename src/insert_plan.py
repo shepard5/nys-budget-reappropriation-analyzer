@@ -468,6 +468,21 @@ def main():
             letter = chr(ord("A") + letter_i)
             inserts[ins_i]["label"] = f"{page}{letter}"
 
+    # Invariants (cheap runtime assertions to catch regressions)
+    _all_survivor_idxs = [int(s["enacted_idx"]) for ins in inserts for s in ins["survivors"]]
+    _eligible_idxs = set(eligible_map)
+    assert len(_all_survivor_idxs) == len(set(_all_survivor_idxs)), \
+        f"Duplicate survivor enacted_idxs in plan: {len(_all_survivor_idxs) - len(set(_all_survivor_idxs))}"
+    assert set(_all_survivor_idxs) == _eligible_idxs, \
+        f"Mismatch: plan={len(_all_survivor_idxs)} eligible={len(_eligible_idxs)} missing={_eligible_idxs - set(_all_survivor_idxs)} extra={set(_all_survivor_idxs) - _eligible_idxs}"
+    _labels = [ins["label"] for ins in inserts]
+    assert len(_labels) == len(set(_labels)), \
+        f"Duplicate labels in plan: {[l for l in _labels if _labels.count(l) > 1]}"
+    _plan_total = sum(s["new_reapprop_amount"] for ins in inserts for s in ins["survivors"])
+    _eligible_total = sum(v["sfs_rounded"] for v in eligible_map.values())
+    assert _plan_total == _eligible_total, \
+        f"Dollar total mismatch: plan=${_plan_total:,} eligible=${_eligible_total:,}"
+
     out = ROOT / "outputs" / "insert_plan.json"
     out.write_text(json.dumps(inserts, indent=2))
 

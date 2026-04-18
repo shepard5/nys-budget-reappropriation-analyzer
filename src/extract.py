@@ -100,6 +100,16 @@ class ExtractResult:
 
 BLANK_STYLE_RE = re.compile(r"min-height")
 
+# Indent of body content (after line number + trailing whitespace). Used to
+# detect wrapped fund-name lines which are indented more than the line that
+# starts them.
+_LINE_NUM_WITH_SEP_RE = re.compile(r"^(\s{0,3}\d{1,3}\s+)")
+
+
+def _body_indent(raw: str) -> int:
+    m = _LINE_NUM_WITH_SEP_RE.match(raw)
+    return len(m.group(1)) if m else 0
+
 
 def walk_html(html: str) -> List[Line]:
     soup = BeautifulSoup(html, "lxml")
@@ -201,6 +211,7 @@ def extract(html: str) -> ExtractResult:
         # separated from a chapter-year header by a blank.
         if FUND_TOP_RE.match(t):
             fund_parts = [re.sub(r"\s+", " ", t)]
+            last_part_indent = _body_indent(L.raw_text)
             j = i + 1
             while j < len(lines) and len(fund_parts) < 3:
                 Lj = lines[j]
@@ -223,7 +234,16 @@ def extract(html: str) -> ExtractResult:
                 # Otherwise, it's a continuation of the fund header. Collapse
                 # internal whitespace so the same fund name always produces the
                 # same string (PDF justification sometimes inserts extra spaces).
-                fund_parts.append(re.sub(r"\s+", " ", tj))
+                # If the body indent is HIGHER than the previous fund-part line,
+                # treat it as a wrap continuation and append to the previous
+                # part instead of starting a new one.
+                tj_indent = _body_indent(Lj.raw_text)
+                tj_norm = re.sub(r"\s+", " ", tj)
+                if tj_indent > last_part_indent:
+                    fund_parts[-1] = f"{fund_parts[-1]} {tj_norm}"
+                else:
+                    fund_parts.append(tj_norm)
+                    last_part_indent = tj_indent
                 j += 1
             chapter_year = 0
             amending_year = 0

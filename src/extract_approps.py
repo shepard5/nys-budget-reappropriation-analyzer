@@ -51,6 +51,17 @@ ROOT = Path(__file__).resolve().parent.parent
 APPROPS_CHAPTER_YEAR = 2025
 
 
+# Indent of body content (after the line number + its trailing whitespace).
+# Used to detect wrapped fund-name lines, which are indented more than the
+# line that starts them.
+_LINE_NUM_WITH_SEP_RE = re.compile(r"^(\s{0,3}\d{1,3}\s+)")
+
+
+def _body_indent(raw: str) -> int:
+    m = _LINE_NUM_WITH_SEP_RE.match(raw)
+    return len(m.group(1)) if m else 0
+
+
 @dataclass
 class Appropriation:
     program: str
@@ -146,6 +157,12 @@ def extract(html: str) -> ExtractApprops:
             # would otherwise break fund-key equality against the reapprop
             # section's single-spaced strings.
             fund_parts = [re.sub(r"\s+", " ", t)]
+            # Track the body-indent of the most recent fund-part line so we
+            # can detect wraps: a subsequent line with HIGHER body indent is
+            # a continuation of the previous part, not a new part. (Used
+            # when a long fund name like "New York State Local Government
+            # Records Management Improvement Fund" wraps across two lines.)
+            last_part_indent = _body_indent(L.raw_text)
             j = i + 1
             while j < len(lines) and len(fund_parts) < 3:
                 Lj = lines[j]
@@ -166,7 +183,15 @@ def extract(html: str) -> ExtractApprops:
                 # this line belongs to a program header, not the fund
                 if PROGRAM_CAPS_LINE_RE.match(tj):
                     break
-                fund_parts.append(re.sub(r"\s+", " ", tj))
+                tj_indent = _body_indent(Lj.raw_text)
+                tj_norm = re.sub(r"\s+", " ", tj)
+                if tj_indent > last_part_indent:
+                    # Wrap — append to the previous fund part instead of
+                    # starting a new one.
+                    fund_parts[-1] = f"{fund_parts[-1]} {tj_norm}"
+                else:
+                    fund_parts.append(tj_norm)
+                    last_part_indent = tj_indent
                 j += 1
             buf_start_idx = None
             i = j

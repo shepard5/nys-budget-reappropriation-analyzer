@@ -151,15 +151,26 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
         ]
         pick = None
         if candidates:
-            # rank by text similarity
+            # rank by text similarity, restricted to exec rows in the same
+            # (program, fund) — otherwise a generic "aid to schools..."
+            # preamble could cross-match unrelated items.
+            same_context = [
+                j for j in candidates
+                if executive.loc[j].program == row.program
+                and executive.loc[j].fund == row.fund
+            ]
+            search = same_context if same_context else candidates
             best_sim = 0.0
-            for j in candidates:
+            for j in search:
                 sim = text_sim(row.bill_language, executive.loc[j].bill_language)
                 if sim > best_sim:
                     best_sim = sim
                     pick = j
-            if best_sim < 0.4:
-                pick = None  # don't match low-confidence
+            # Require higher confidence when falling back to cross-context
+            # matching (no same-context candidate found).
+            threshold = 0.4 if same_context else 0.6
+            if best_sim < threshold:
+                pick = None
         if pick is not None:
             matched_exec.add(pick)
             er = executive.loc[pick]

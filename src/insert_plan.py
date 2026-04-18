@@ -26,6 +26,8 @@ Output: outputs/insert_plan.json
 """
 
 import json
+import os
+import re
 import sys
 from pathlib import Path
 from collections import defaultdict
@@ -36,15 +38,27 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# PDF page offsets.
-# - exec PDF covers pages 268-352, HTML page idx 0 = PDF 268.
-# - enacted reapprop section covers pages 315-450, HTML idx 0 = PDF 315.
-# - enacted appropriation section covers pages 264-314, HTML idx 0 = PDF 264.
-EXEC_PDF_PAGE_OFFSET = 268
-ENACTED_PDF_PAGE_OFFSET = {
-    "reapprop": 315,
-    "appropriation": 264,
-}
+# PDF page offsets are derived from the filenames of the input PDFs, which
+# encode their source page range as "...pg<START>-<END>-...". This keeps the
+# pipeline portable across years without editing constants.
+_PG_RANGE_RE = re.compile(r"pg(\d+)-(\d+)")
+
+
+def _pdf_first_page(symlink_path: Path) -> int:
+    """Resolve the symlink target's filename and extract its starting PDF
+    page number. Raises if the filename doesn't encode the range."""
+    target = os.path.realpath(symlink_path)
+    m = _PG_RANGE_RE.search(target)
+    if not m:
+        raise ValueError(
+            f"Input PDF filename doesn't encode pg-range: {target}"
+        )
+    return int(m.group(1))
+
+
+# Initialized lazily in main() to avoid import-time file access.
+EXEC_PDF_PAGE_OFFSET: int = 0
+ENACTED_PDF_PAGE_OFFSET: Dict[str, int] = {}
 
 
 def _compute_exec_fund_header_positions() -> Dict:
@@ -120,6 +134,19 @@ def _compute_exec_fund_header_positions() -> Dict:
 
 
 def main():
+    # Derive PDF page offsets from input symlink targets. Filenames encode
+    # "pg<START>-<END>" so the pipeline is portable across budget years.
+    global EXEC_PDF_PAGE_OFFSET, ENACTED_PDF_PAGE_OFFSET
+    EXEC_PDF_PAGE_OFFSET = _pdf_first_page(ROOT / "inputs" / "executive_26-27.pdf")
+    ENACTED_PDF_PAGE_OFFSET = {
+        "reapprop": _pdf_first_page(ROOT / "inputs" / "enacted_25-26.pdf"),
+    }
+    approps_symlink = ROOT / "inputs" / "enacted_25-26_approps.pdf"
+    if approps_symlink.exists():
+        ENACTED_PDF_PAGE_OFFSET["appropriation"] = _pdf_first_page(approps_symlink)
+    print(f"[*] PDF page offsets: exec={EXEC_PDF_PAGE_OFFSET}  "
+          f"enacted={ENACTED_PDF_PAGE_OFFSET}")
+
     # Enacted is reapprops + appropriations, concatenated in the same order
     # compare.py used (reapprops first, then approps) so enacted_idx aligns.
     ea = pd.read_csv(ROOT / "outputs" / "enacted_reapprops.csv")
@@ -185,8 +212,13 @@ def main():
     # first_line) sort would interleave them. Use source as the primary key.
     SOURCE_ORDER = {"appropriation": 0, "reapprop": 1}
     if "source" in enacted.columns:
+        # Assert every source value is one we know how to order. Silent
+        # fallbacks here would mis-sort enacted_order and corrupt the
+        # "between anchors" calculation downstream.
+        unknown = set(enacted["source"].unique()) - set(SOURCE_ORDER)
+        assert not unknown, f"Unknown source values in enacted: {unknown}"
         enacted_sorted = enacted.assign(
-            _src_order=enacted["source"].map(SOURCE_ORDER).fillna(1)
+            _src_order=enacted["source"].map(SOURCE_ORDER)
         ).sort_values(["_src_order", "first_page", "first_line"])
     else:
         enacted_sorted = enacted.sort_values(["first_page", "first_line"])

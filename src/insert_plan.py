@@ -36,13 +36,28 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# PDF page offsets: exec PDF covers pages 268-352, so HTML page idx 0 = PDF 268
+# PDF page offsets.
+# - exec PDF covers pages 268-352, HTML page idx 0 = PDF 268.
+# - enacted reapprop section covers pages 315-450, HTML idx 0 = PDF 315.
+# - enacted appropriation section covers pages 264-314, HTML idx 0 = PDF 264.
 EXEC_PDF_PAGE_OFFSET = 268
-ENACTED_PDF_PAGE_OFFSET = 315
+ENACTED_PDF_PAGE_OFFSET = {
+    "reapprop": 315,
+    "appropriation": 264,
+}
 
 
 def main():
-    enacted = pd.read_csv(ROOT / "outputs" / "enacted_reapprops.csv").reset_index(drop=True)
+    # Enacted is reapprops + appropriations, concatenated in the same order
+    # compare.py used (reapprops first, then approps) so enacted_idx aligns.
+    ea = pd.read_csv(ROOT / "outputs" / "enacted_reapprops.csv")
+    ap_path = ROOT / "outputs" / "enacted_approps.csv"
+    if ap_path.exists():
+        eb = pd.read_csv(ap_path)
+        enacted = pd.concat([ea, eb], ignore_index=True)
+    else:
+        enacted = ea
+    enacted = enacted.reset_index(drop=True)
     executive = pd.read_csv(ROOT / "outputs" / "executive_reapprops.csv").reset_index(drop=True)
     comp = pd.read_csv(ROOT / "outputs" / "comparison.csv")
     sfs = pd.read_csv(ROOT / "outputs" / "dropped_with_sfs.csv")
@@ -66,12 +81,18 @@ def main():
     executive_sorted = executive.sort_values(["first_page", "first_line"]).reset_index()
     executive_sorted = executive_sorted.rename(columns={"index": "orig_exec_idx"})
 
-    # Build list of anchor exec_idx in document order, restricted to items with a 25-26 match
-    exec_anchors: List[int] = []
-    for _, r in executive_sorted.iterrows():
-        ei = int(r.orig_exec_idx)
-        if ei in rev_map:
-            exec_anchors.append(ei)
+    # Build list of anchor exec_idx, sorted by their matched enacted doc
+    # position. Walking pairs in this order ensures non-overlapping enacted
+    # ranges, even when exec-order and enacted-order diverge (e.g. when
+    # chyr 2025 approp items appear in different relative positions between
+    # the two documents).
+    _candidate_anchors = [
+        int(r.orig_exec_idx) for _, r in executive_sorted.iterrows()
+        if int(r.orig_exec_idx) in rev_map
+    ]
+    # (Note: at this point `enacted_position` is built below; defer sort until
+    # after it's available. For now, just collect; we sort right after.)
+    exec_anchors: List[int] = _candidate_anchors
 
     # Build a set of (program, fund, chapter_year, amending_year) that exist in EXEC
     # — used to detect chapter-year-dropped edge case
@@ -82,14 +103,29 @@ def main():
     # Build a set of (program, fund) that exist in EXEC — fund-dropped edge case
     exec_fund_set = {(r.program, r.fund) for _, r in executive.iterrows()}
 
-    # Sort enacted by document order too
-    enacted_order = enacted.sort_values(["first_page", "first_line"]).index.tolist()
+    # Sort enacted by true document order. Appropriation pages (HTML 0..50 for
+    # PDF 264-314) come BEFORE reapprop pages (HTML 0..135 for PDF 315-450);
+    # both use HTML page indices starting at 0 so a naive (first_page,
+    # first_line) sort would interleave them. Use source as the primary key.
+    SOURCE_ORDER = {"appropriation": 0, "reapprop": 1}
+    if "source" in enacted.columns:
+        enacted_sorted = enacted.assign(
+            _src_order=enacted["source"].map(SOURCE_ORDER).fillna(1)
+        ).sort_values(["_src_order", "first_page", "first_line"])
+    else:
+        enacted_sorted = enacted.sort_values(["first_page", "first_line"])
+    enacted_order = enacted_sorted.index.tolist()
     enacted_position = {idx: pos for pos, idx in enumerate(enacted_order)}
+
+    # Now that enacted_position exists, re-sort exec_anchors by it so pair
+    # iteration walks monotonic enacted positions (no overlapping gaps).
+    exec_anchors.sort(key=lambda ei: enacted_position[rev_map[ei]])
 
     exec_program_set = {r.program for _, r in executive.iterrows()}
 
     # Ordered list of unique (program, fund) in ENACTED doc order — used to
     # find the "next fund" after a missing-in-exec fund, for label placement.
+    # Uses the corrected enacted_order (appropriation → reapprop).
     enacted_fund_order: List = []
     seen_funds = set()
     for idx in enacted_order:
@@ -312,6 +348,12 @@ def main():
         last_surv = survivors_list[-1]
         first_page = int(enacted.loc[first_surv].first_page)
         last_page = max(int(enacted.loc[idx].last_page) for idx in survivors_list)
+        # All survivors in an insert share the same source (insert_plan only
+        # groups contiguous same-fund survivors, and source is implied by
+        # which section they live in).
+        survivor_source = (
+            enacted.loc[first_surv].source if "source" in enacted.columns else "reapprop"
+        )
 
         # Non-survivors BETWEEN these survivors in enacted order (will be struck)
         first_pos = enacted_position[first_surv]
@@ -354,6 +396,11 @@ def main():
                     "last_line": int(enacted.loc[idx].last_line),
                     "needs_chapter_header": chapter_year_needs_header[idx],
                     "needs_fund_header": fund_needs_header[idx],
+                    "source": (
+                        enacted.loc[idx].source
+                        if "source" in enacted.columns
+                        else "reapprop"
+                    ),
                 }
                 for idx in survivors_list
             ],
@@ -370,8 +417,8 @@ def main():
                 for idx in non_survivors
             ],
             "source_enacted_page_range_pdf": [
-                first_page + ENACTED_PDF_PAGE_OFFSET,
-                last_page + ENACTED_PDF_PAGE_OFFSET,
+                first_page + ENACTED_PDF_PAGE_OFFSET[survivor_source],
+                last_page + ENACTED_PDF_PAGE_OFFSET[survivor_source],
             ],
             "source_enacted_page_range_html": [first_page, last_page],
             "anchor_upper": anchor_upper,

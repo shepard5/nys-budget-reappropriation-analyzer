@@ -13,6 +13,15 @@ Clean-slate rebuild targeting the actual deliverables:
 Scope: **Education ATL only.** Capital, StateOps, and older-than-5-years
 tracking are out of scope.
 
+The pipeline processes TWO enacted sources:
+- 25-26 **reapprops** section (pp 315-450) — carry-overs from prior chapter years
+- 25-26 **appropriations** section (pp 264-314) — new ChYr 2025 spending
+
+A drop is any item in either section that isn't reappropriated in the 26-27
+exec. Appropriation-sourced drops produce inserts whose source text is the
+appropriation line with ` ... (re. $SFS_ROUNDED)` appended as a tracked
+insertion, converting it into reapprop form.
+
 ## Inputs (symlinked to inputs/)
 
 | Symlink | Source | Role |
@@ -109,27 +118,32 @@ immediately after the upper-anchor line in the exec HTML.
 - [x] Extractor validation vs BUDGET BREAKDOWN
 - [x] Comparator — 160 continued, 114 modified, 318 dropped, 88 new_in_exec
 - [x] SFS join — 306/318 matched (96%); 248 eligible for insert (SFS ≥ $1K)
-- [x] Insert plan — 102 labels, 248 survivors, $4.29B to re-add
-      (split on any struck content between survivors — ineligible drops,
-      continued structural headers, program/fund transitions that exist in exec)
-- [x] Insert PDFs — 102 signed PDFs in `outputs/inserts/Insert_*.pdf`
-      (page header lines — page number, agency, bill title — preserved as-is,
-      not struck)
-- [x] Tracker PDF — `outputs/tracker.pdf` (85 pages, 102 tracked labels inline)
+- [x] Insert plan — 124 labels, 298 survivors, $5.26B to re-add
+      (v9.1: adds chyr-2025 drops sourced from the 25-26 appropriations
+      section. 22 appropriation-sourced + 102 reapprop-sourced.)
+- [x] Insert PDFs — 124 signed PDFs in `outputs/inserts/Insert_*.pdf`
+      (appropriation-sourced inserts append ` ... (re. $X)` as tracked
+      insertion after the source amount to convert approp → reapprop form.
+      Page header lines preserved as-is, not struck.)
+- [x] Tracker PDF — `outputs/tracker.pdf` (85 pages, 124 tracked labels inline)
+- [x] Match vs manual sign-off — 91/102 labels overlap (89%). Remaining
+      differences are grouping judgment calls per user's note that manual
+      grouping was loose. See `outputs/label_diff.csv`.
 
 ## How to re-run end-to-end
 
 ```bash
 cd /Users/samscott/Desktop/REAPPROPS_v9
 source venv/bin/activate
-python src/upload_and_cache.py   # one-time; skips if cache/*.html exist
-python src/extract.py            # -> outputs/{enacted,executive}_reapprops.csv
-python tests/validate_counts.py  # sanity check vs BUDGET BREAKDOWN
-python src/compare.py            # -> outputs/comparison.csv
-python src/sfs.py                # -> outputs/dropped_with_sfs.csv
-python src/insert_plan.py        # -> outputs/insert_plan.json
-python src/generate_inserts.py   # -> outputs/inserts/Insert_*.pdf (82 files)
-python src/generate_tracker.py   # -> outputs/tracker.pdf
+python src/upload_and_cache.py    # 3 LBDC uploads, cached locally
+python src/extract.py             # reapprops (enacted + exec) -> CSVs
+python src/extract_approps.py     # 25-26 appropriations -> CSV
+python tests/validate_counts.py   # reapprop count sanity vs BUDGET BREAKDOWN
+python src/compare.py             # unified enacted vs exec -> comparison.csv
+python src/sfs.py                 # -> dropped_with_sfs.csv (SFS ≥ $1K rounded)
+python src/insert_plan.py         # -> insert_plan.json (124 labels)
+python src/generate_inserts.py    # -> outputs/inserts/Insert_*.pdf
+python src/generate_tracker.py    # -> outputs/tracker.pdf
 ```
 
 Deltas to iterate on:

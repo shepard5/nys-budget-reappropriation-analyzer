@@ -24,6 +24,7 @@ CACHE = ROOT / "cache"
 JOBS = [
     ("enacted_25-26.pdf", "enacted_25-26.html"),
     ("executive_26-27.pdf", "executive_26-27.html"),
+    ("enacted_25-26_approps.pdf", "enacted_25-26_approps.html"),
 ]
 
 

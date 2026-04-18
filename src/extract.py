@@ -427,6 +427,10 @@ def main():
         print(f"  header lines: {result.n_header}")
         print(f"  reapprops   : {len(result.reapprops)}")
         if pd is not None:
+            # Mark reapprop-sourced records so downstream can pick the right
+            # source HTML (enacted_25-26.html for reapprops, _approps.html for
+            # appropriations) when generating insert PDFs.
+            source_tag = "reapprop" if html_name == "enacted_25-26.html" else "executive"
             rows = [{
                 "program": r.program,
                 "fund": r.fund,
@@ -440,6 +444,7 @@ def main():
                 "last_page": r.last_page_idx,
                 "last_line": r.last_line_num,
                 "bill_language": r.bill_language,
+                "source": source_tag,
             } for r in result.reapprops]
             df = pd.DataFrame(rows)
             df.to_csv(outputs / csv_name, index=False)

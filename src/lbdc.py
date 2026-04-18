@@ -239,6 +239,18 @@ class LBDCDocument:
             current.insert_after(node)
             current = node
 
+    def append_to_line_tracked(self, line_idx: int, text: str, page: int = 0) -> bool:
+        """Append `text` as a tracked <ins> at the END of the <p> at line_idx.
+        Used for appropriation-sourced inserts where we want to add
+        ` .... (re. $X)` after the existing amount without striking anything.
+        """
+        lines = self.get_lines(page)
+        if line_idx >= len(lines):
+            return False
+        ins_tag = self._make_ins(text)
+        lines[line_idx].append(ins_tag)
+        return True
+
     def insert_line(self, after_line: int, text: str, page: int = 0) -> bool:
         lines = self.get_lines(page)
         if after_line >= len(lines):

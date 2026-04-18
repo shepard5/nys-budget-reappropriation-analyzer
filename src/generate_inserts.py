@@ -246,20 +246,45 @@ def apply_insert_edits(doc: LBDCDocument, insert: dict) -> None:
             if (pg_off, ln) not in keep_lines:
                 _strike_p_in_place(p, doc)
 
-    # Replace (re. $X_old) with (re. $X_new) for survivors whose amount changed
+    # (re. $X) handling — two paths depending on source:
+    #
+    #   REAPPROP-sourced survivor: the source line already contains
+    #     `(re. $OLD)`. Replace with `(re. $NEW)` if the amount changed.
+    #
+    #   APPROPRIATION-sourced survivor: the source line has NO `(re. $X)`
+    #     suffix — it ends with the appropriation amount. We append
+    #     ` ... (re. $NEW)` as a tracked <ins> at the END of the survivor's
+    #     last body line, turning the approp into a reapprop with the new
+    #     SFS-rounded amount.
     for s in insert["survivors"]:
-        old_amt = int(s["old_reapprop_amount"])
         new_amt = int(s["new_reapprop_amount"])
-        if old_amt == new_amt:
-            continue
-        old_txt = f"(re. ${format_amount(old_amt)})"
-        new_txt = f"(re. ${format_amount(new_amt)})"
+        source = s.get("source", "reapprop")
         page_off = s["last_page"] - source_html_start
-        ok = doc.replace_text_tracked(old_txt, new_txt, page=page_off)
-        if not ok:
-            # Try variant without $
-            alt_old = f"(re. {format_amount(old_amt)})"
-            doc.replace_text_tracked(alt_old, new_txt, page=page_off)
+        if source == "appropriation":
+            # Find the <p> with the survivor's last visible line number
+            last_line = s["last_line"]
+            target_p_idx = None
+            for i, (p, ln, _t, blank) in enumerate(pages_lines_cache[page_off]):
+                if ln == last_line:
+                    target_p_idx = i
+                    break
+            if target_p_idx is not None:
+                doc.append_to_line_tracked(
+                    target_p_idx,
+                    f" ... (re. ${format_amount(new_amt)})",
+                    page=page_off,
+                )
+        else:
+            old_amt = int(s["old_reapprop_amount"])
+            if old_amt == new_amt:
+                continue
+            old_txt = f"(re. ${format_amount(old_amt)})"
+            new_txt = f"(re. ${format_amount(new_amt)})"
+            ok = doc.replace_text_tracked(old_txt, new_txt, page=page_off)
+            if not ok:
+                # Try variant without $
+                alt_old = f"(re. {format_amount(old_amt)})"
+                doc.replace_text_tracked(alt_old, new_txt, page=page_off)
 
     # Insert label right BEFORE the earliest kept line in the insert.
     # That's either the first survivor's first line, or (if needs_chapter_header
@@ -329,7 +354,14 @@ def run_one(client: LBDCClient, plan: List[dict], label: str, full_html: str) ->
 def main():
     args = sys.argv[1:]
     plan = json.loads((OUTPUTS / "insert_plan.json").read_text())
-    full_html = (CACHE / "enacted_25-26.html").read_text()
+
+    # Load both enacted sources; each insert picks based on survivors[0].source.
+    html_by_source = {
+        "reapprop": (CACHE / "enacted_25-26.html").read_text(),
+    }
+    approps_path = CACHE / "enacted_25-26_approps.html"
+    if approps_path.exists():
+        html_by_source["appropriation"] = approps_path.read_text()
 
     if "--pilot" in args:
         labels = [plan[0]["label"]]
@@ -341,6 +373,15 @@ def main():
     client = LBDCClient()
     for label in labels:
         try:
+            ins = next((x for x in plan if x.get("label") == label), None)
+            if ins is None:
+                print(f"[!] Insert {label!r} not in plan")
+                continue
+            source = ins["survivors"][0].get("source", "reapprop")
+            full_html = html_by_source.get(source)
+            if full_html is None:
+                print(f"[!] No cached HTML for source={source!r}; skipping {label}")
+                continue
             run_one(client, plan, label, full_html)
         except Exception as e:
             print(f"[!] {label}: {e}")

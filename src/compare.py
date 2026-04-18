@@ -117,6 +117,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "exec_line": int(er.first_line),
                 "bill_language": row.bill_language,
                 "match_method": "full_key",
+                "source": row.source if "source" in row else "reapprop",
             })
         else:
             records.append({
@@ -137,6 +138,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "exec_line": -1,
                 "bill_language": row.bill_language,
                 "match_method": "",
+                "source": row.source if "source" in row else "reapprop",
             })
 
     # PASS 2: NaN-ID items — match by (prog, fund, chyr, amnd, amounts) + text similarity
@@ -180,6 +182,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "exec_line": int(er.first_line),
                 "bill_language": row.bill_language,
                 "match_method": "no_id_text",
+                "source": row.source if "source" in row else "reapprop",
             })
         else:
             records.append({
@@ -200,6 +203,7 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
                 "exec_line": -1,
                 "bill_language": row.bill_language,
                 "match_method": "no_id_unmatched",
+                "source": row.source if "source" in row else "reapprop",
             })
 
     # New in exec — everything exec that wasn't matched
@@ -224,13 +228,25 @@ def compare(enacted: pd.DataFrame, executive: pd.DataFrame) -> pd.DataFrame:
             "exec_line": int(row.first_line),
             "bill_language": row.bill_language,
             "match_method": "",
+            "source": "executive",  # new_in_exec — source is the exec bill
         })
 
     return pd.DataFrame.from_records(records)
 
 
 def main():
-    enacted = pd.read_csv(ROOT / "outputs" / "enacted_reapprops.csv")
+    # Enacted = reapprops (chyr <= 2024) + appropriations (chyr 2025).
+    # The two are extracted separately from distinct sections of the 25-26 ATL
+    # bill but feed the same compare logic against the 26-27 exec reapprops.
+    ea = pd.read_csv(ROOT / "outputs" / "enacted_reapprops.csv")
+    ap_path = ROOT / "outputs" / "enacted_approps.csv"
+    if ap_path.exists():
+        eb = pd.read_csv(ap_path)
+        enacted = pd.concat([ea, eb], ignore_index=True)
+        print(f"[*] Enacted = reapprops ({len(ea)}) + appropriations ({len(eb)}) = {len(enacted)}")
+    else:
+        enacted = ea
+        print(f"[*] Enacted = reapprops only ({len(ea)})")
     executive = pd.read_csv(ROOT / "outputs" / "executive_reapprops.csv")
 
     df = compare(enacted, executive)

@@ -61,30 +61,29 @@ EXEC_PDF_PAGE_OFFSET: int = 0
 ENACTED_PDF_PAGE_OFFSET: Dict[str, int] = {}
 
 
-def _compute_exec_fund_header_positions() -> Dict:
+def _compute_exec_header_positions():
     """
     Walk the cached executive HTML and locate the <p> index where each
-    (program, fund) block's FUND-FAMILY line lives (e.g., "Special Revenue
-    Funds - Federal"). Used for `before_next_fund` anchor placement: the
-    label should sit ABOVE the fund-header lines of the next fund, not
-    between that fund's chyr header and body.
+    (program, fund) block's FUND-FAMILY line lives AND where each PROGRAM
+    header line lives. Used for precise `before_next_fund` and
+    `before_next_program` anchor placement — labels should sit ABOVE the
+    structural headers, not between a chyr header and its body.
 
-    Returns dict keyed by (program, fund) -> {
-        "page_html": int,
-        "p_idx": int,          # index of fund-family <p> within the page
-        "line_num": int,       # visible line num of fund-family line
-    }
+    Returns (program_positions, fund_positions):
+      program_positions: program_name -> {page_html, p_idx, line_num}
+      fund_positions: (program, fund) -> {page_html, p_idx, line_num}
     """
     from bs4 import BeautifulSoup
     cache_html = ROOT / "cache" / "executive_26-27.html"
     if not cache_html.exists():
-        return {}
+        return {}, {}
     soup = BeautifulSoup(cache_html.read_text(), "lxml")
     pages = soup.find_all("div", class_="page")
 
     from patterns import PROGRAM_RE, FUND_TOP_RE, CHAPTER_YEAR_RE, LINE_NUM_RE
 
-    result: Dict = {}
+    program_positions: Dict = {}
+    fund_positions: Dict = {}
     current_program = ""
     current_fund_parts: List[str] = []
     for page_idx, page in enumerate(pages):
@@ -101,6 +100,10 @@ def _compute_exec_fund_header_positions() -> Dict:
             if PROGRAM_RE.match(t):
                 current_program = t
                 current_fund_parts = []
+                if current_program not in program_positions:
+                    program_positions[current_program] = {
+                        "page_html": page_idx, "p_idx": p_idx, "line_num": line_num,
+                    }
                 continue
             if FUND_TOP_RE.match(t):
                 # Start of a new fund block — record this <p> as the fund-family
@@ -128,9 +131,15 @@ def _compute_exec_fund_header_positions() -> Dict:
                     j += 1
                 if current_program and current_fund_parts:
                     key = (current_program, "; ".join(current_fund_parts))
-                    if key not in result:
-                        result[key] = fund_family_pos
-    return result
+                    if key not in fund_positions:
+                        fund_positions[key] = fund_family_pos
+    return program_positions, fund_positions
+
+
+def _compute_exec_fund_header_positions() -> Dict:
+    """Back-compat wrapper — returns only the fund-positions half."""
+    _, fund_positions = _compute_exec_header_positions()
+    return fund_positions
 
 
 def main():
@@ -161,9 +170,9 @@ def main():
     comp = pd.read_csv(ROOT / "outputs" / "comparison.csv")
     sfs = pd.read_csv(ROOT / "outputs" / "dropped_with_sfs.csv")
 
-    # Precompute exact fund-header positions in exec HTML for precise
-    # `before_next_fund` anchor placement.
-    exec_fund_header_pos = _compute_exec_fund_header_positions()
+    # Precompute exact program-header and fund-header positions in exec HTML
+    # for precise `before_next_program` / `before_next_fund` anchor placement.
+    exec_program_header_pos, exec_fund_header_pos = _compute_exec_header_positions()
 
     # Build match map: enacted_idx -> exec_idx (only continued/modified)
     matches = comp[comp.status.isin(["continued", "modified"])]
@@ -240,7 +249,9 @@ def main():
     # For `before_next_fund`, we want the next fund that appears AFTER the
     # survivor's fund IN THE SAME SECTION.
     enacted_fund_order_by_source: Dict[str, List] = {"appropriation": [], "reapprop": []}
+    enacted_program_order_by_source: Dict[str, List] = {"appropriation": [], "reapprop": []}
     _seen_by_source: Dict[str, set] = {"appropriation": set(), "reapprop": set()}
+    _seen_prog_by_source: Dict[str, set] = {"appropriation": set(), "reapprop": set()}
     for idx in enacted_order:
         r = enacted.loc[idx]
         src = r.source if "source" in enacted.columns else "reapprop"
@@ -248,6 +259,9 @@ def main():
         if key not in _seen_by_source[src]:
             _seen_by_source[src].add(key)
             enacted_fund_order_by_source[src].append(key)
+        if r.program not in _seen_prog_by_source[src]:
+            _seen_prog_by_source[src].add(r.program)
+            enacted_program_order_by_source[src].append(r.program)
 
     # For each structural group in exec, record the FIRST reapprop's position.
     # The "header" for that group conceptually sits just before that position.
@@ -398,7 +412,7 @@ def main():
                 "anchor_kind": "fund_header",
             }, pg + EXEC_PDF_PAGE_OFFSET
 
-        # 4. Program header (fund dropped; program exists).
+        # 6. Program header (fund dropped; program still exists in exec).
         if s_prog in exec_program_first_pos:
             pg, ln = exec_program_first_pos[s_prog]
             return {
@@ -409,7 +423,41 @@ def main():
                 "anchor_kind": "program_header",
             }, pg + EXEC_PDF_PAGE_OFFSET
 
-        # 5. Doc start.
+        # 7. Survivor's PROGRAM is entirely missing from exec — place the
+        #    label just before the NEXT program (in enacted doc order, same
+        #    source section) that DOES exist in exec. Keeps inserts in
+        #    approximately the right position even when a whole program was
+        #    dropped. Example: OFFICE OF MANAGEMENT SERVICES PROGRAM is in
+        #    25-26 approps but not in 26-27 exec; its drops should sit just
+        #    above where OFFICE OF PREKINDERGARTEN starts in exec. This rule
+        #    is universally true — a dropped-program's reapprops always slot
+        #    into the same program-ordering position in the target section.
+        surv_src = surv.source if "source" in enacted.columns else "reapprop"
+        surv_prog_order = enacted_program_order_by_source.get(surv_src, [])
+        if s_prog in surv_prog_order:
+            pos = surv_prog_order.index(s_prog)
+            for later_prog in surv_prog_order[pos + 1:]:
+                if later_prog in exec_program_first_pos:
+                    # Prefer the exact program-header line position (computed
+                    # from exec HTML) so the label sits ABOVE the program
+                    # header itself — rather than before the program's first
+                    # reapprop body on a later page.
+                    hdr = exec_program_header_pos.get(later_prog)
+                    if hdr is not None:
+                        pg = hdr["page_html"]
+                        ln = max(hdr["line_num"] - 1, 0)
+                    else:
+                        pg, first_ln = exec_program_first_pos[later_prog]
+                        ln = max(first_ln - 1, 0)
+                    return {
+                        "exec_idx": None,
+                        "exec_page_html": pg,
+                        "exec_line": ln,
+                        "exec_page_pdf": pg + EXEC_PDF_PAGE_OFFSET,
+                        "anchor_kind": "before_next_program",
+                    }, pg + EXEC_PDF_PAGE_OFFSET
+
+        # 8. Doc start — last-resort fallback.
         return {
             "exec_idx": None,
             "exec_page_html": 0,
@@ -582,11 +630,26 @@ def main():
     for i, ins in enumerate(inserts):
         inserts_by_page[ins["label_pdf_page"]].append(i)
 
+    # Sort order when multiple inserts share an exec_line anchor: more-specific
+    # anchors should label earlier. E.g. if a Higher Ed chyr-re-insert and an
+    # OMS (dropped program) insert both anchor at the Higher-Ed → PK boundary,
+    # the chyr-re-insert (belongs WITHIN Higher Ed) labels before the
+    # dropped-program insert (belongs BETWEEN Higher Ed and PK).
+    ANCHOR_SPECIFICITY = {
+        "continued_same_fund":   0,
+        "chyr_header":           1,
+        "after_newer_chyr":      2,
+        "before_next_fund":      3,
+        "fund_header":           4,
+        "before_next_program":   5,
+        "program_header":        6,
+        "doc_start":             7,
+    }
+
     for page, idxs in inserts_by_page.items():
-        # Sort by anchor_upper.exec_line, then by first survivor's enacted
-        # (page, line) so sub-split groups appear in document order
         idxs.sort(key=lambda i: (
             inserts[i]["anchor_upper"]["exec_line"] or 0,
+            ANCHOR_SPECIFICITY.get(inserts[i]["anchor_upper"]["anchor_kind"], 99),
             inserts[i]["survivors"][0]["first_page"],
             inserts[i]["survivors"][0]["first_line"],
         ))

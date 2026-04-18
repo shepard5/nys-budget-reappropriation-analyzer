@@ -118,17 +118,19 @@ immediately after the upper-anchor line in the exec HTML.
 - [x] Extractor validation vs BUDGET BREAKDOWN
 - [x] Comparator — 160 continued, 114 modified, 318 dropped, 88 new_in_exec
 - [x] SFS join — 306/318 matched (96%); 248 eligible for insert (SFS ≥ $1K)
-- [x] Insert plan — 124 labels, 298 survivors, $5.26B to re-add
-      (v9.1: adds chyr-2025 drops sourced from the 25-26 appropriations
-      section. 22 appropriation-sourced + 102 reapprop-sourced.)
+- [x] Insert plan — 124 labels, 297 survivors, $5,254,008,000 to re-add
+      (22 appropriation-sourced + 102 reapprop-sourced). Runtime invariants
+      enforce unique labels, dollar reconciliation, and 1:1 survivor-to-
+      plan coverage; any regression crashes the plan build.
 - [x] Insert PDFs — 124 signed PDFs in `outputs/inserts/Insert_*.pdf`
       (appropriation-sourced inserts append ` ... (re. $X)` as tracked
       insertion after the source amount to convert approp → reapprop form.
       Page header lines preserved as-is, not struck.)
 - [x] Tracker PDF — `outputs/tracker.pdf` (85 pages, 124 tracked labels inline)
-- [x] Match vs manual sign-off — 91/102 labels overlap (89%). Remaining
-      differences are grouping judgment calls per user's note that manual
-      grouping was loose. See `outputs/label_diff.csv`.
+- [x] Match vs manual sign-off — **92/102 labels overlap (90%)**. Remaining
+      10% are grouping judgment calls (user confirmed manual grouping was
+      loose). 32 v9-only labels; most are federal reapprops the manual
+      ignored by policy. See `outputs/label_diff.csv`.
 
 ## How to re-run end-to-end
 
@@ -146,8 +148,38 @@ python src/generate_inserts.py    # -> outputs/inserts/Insert_*.pdf
 python src/generate_tracker.py    # -> outputs/tracker.pdf
 ```
 
-Deltas to iterate on:
-- 12 drops with no SFS match (mostly NaN-approp_id items) need manual review —
-  see `outputs/dropped_with_sfs.csv` where `sfs_balance` is empty.
-- Formula-aid exclusions not yet filtered (GSPS, apportionment, etc.). Add a
-  skip list in `src/insert_plan.py` if needed.
+## Residual limitations
+
+- **27 drops without SFS match** (~24 are NaN-approp-id items where the bill
+  text lists a bare dollar amount without a parenthesized ID — a known
+  extractor limitation per CLAUDE.md). See `outputs/dropped_with_sfs.csv`
+  where `sfs_balance` is empty.
+- **4 ID'd drops with no SFS data** (21701 STAR $20.4B chyr 2025, 21771 PK
+  $500K chyr 2025, 57024 PK $50K chyr 2024, and one other): ATL Drops.xlsx
+  has these rows but the SFS column is blank. This is a data-source gap,
+  not a pipeline bug. Manually acquire SFS figures if needed.
+- **Formula-aid exclusions not applied** (GSPS, apportionment, school aid,
+  etc. per CLAUDE.md). v9 emits inserts for all eligible drops; filter
+  manually at review time or add a skip list to `insert_plan.py`.
+- **Page-header cosmetic**: page number / agency / bill-title lines are
+  preserved (not struck) in insert PDFs per user rule; visually differs
+  from last year's manually-produced inserts where they were struck.
+
+## Audit trail
+
+A substantial code + data audit was performed with the following findings
+addressed:
+
+- Consolidated regex patterns into `src/patterns.py` (no more drift between
+  extract.py / extract_approps.py / generate_inserts.py).
+- Fixed fund-name wrap detection in both extractors — PDF-wrapped fund names
+  like "New York State Local Government Records Management Improvement Fund"
+  were being split across multiple fund parts.
+- Derived PDF page offsets from input filenames (no hardcoded magic numbers).
+- Tightened NaN-ID text-similarity matching: restrict candidates to same
+  (program, fund); fall back to cross-context only with a higher threshold.
+- Runtime invariants in `insert_plan.py`: unique labels, dollar total equals
+  SFS-eligible total, every eligible drop appears in exactly one insert.
+- Hard-assert SOURCE_ORDER has entries for all source values.
+- Refined `before_next_fund` anchor placement to use exact fund-family line
+  positions from exec HTML rather than an approximation.

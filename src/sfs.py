@@ -89,13 +89,29 @@ def _learn_dept_to_agency_mapping(sfs_df: pd.DataFrame) -> Dict[str, str]:
         on=["approp_id_s", "chapter_year_i", "approp_amount_i"],
         how="inner",
     )
-    # Majority vote: for each agency, which dept_code appears most often?
-    counts = joined.groupby(["agency", "dept_code"]).size().reset_index(name="n")
-    # Winner per agency
+    # 5-digit approp IDs aren't globally unique — small-dollar items
+    # ($100K member-item range) collide across agencies in (id, yr, amt) space.
+    # Large-amount matches are much more discriminating: a $5M+ reapprop with
+    # matching (id, yr, amt) almost certainly identifies one real dept_code.
+    # Majority-vote per agency using these high-signal matches only.
+    big = joined[joined["approp_amount_i"] >= 1_000_000]
+    # Fall back to all rows if an agency has no big matches (catches small
+    # agencies whose items are all sub-$1M).
+    counts_big = big.groupby(["agency", "dept_code"]).size().reset_index(name="n")
+    counts_all = joined.groupby(["agency", "dept_code"]).size().reset_index(name="n")
+    # Winner per agency: prefer the big-amount vote; fall back to all.
+    agencies_with_big = set(big["agency"].unique())
     dept_to_agency: Dict[str, str] = {}
-    for agency, group in counts.groupby("agency"):
+    for agency, group in counts_big.groupby("agency"):
         winner = group.sort_values("n", ascending=False).iloc[0]
         dept_to_agency[str(winner.dept_code)] = agency
+    for agency, group in counts_all.groupby("agency"):
+        if agency in agencies_with_big:
+            continue
+        winner = group.sort_values("n", ascending=False).iloc[0]
+        # Only add if dept_code not already claimed by a big-match agency.
+        if str(winner.dept_code) not in dept_to_agency:
+            dept_to_agency[str(winner.dept_code)] = agency
     return dept_to_agency
 
 
@@ -248,9 +264,11 @@ def load_sfs_from_export(path: Path) -> pd.DataFrame:
             pd.to_numeric(sub.loc[fallback_mask, "curr_amt"], errors="coerce").fillna(0).astype(int)
         )
 
-    # Drop rows with no year / approp_id.
+    # Drop rows with no year. Keep member items (approp_id_s="", e.g. "M0001",
+    # "N3773") — they're needed to match bill lines like "Afton Driving Park"
+    # that have no 5-digit approp ID. The noid-join downstream will key on
+    # (agency, chyr, approp_amount, reapprop_amount) for these rows.
     sub = sub.dropna(subset=["chapter_year_i"])
-    sub = sub[sub["approp_id_s"] != ""]
     sub["chapter_year_i"] = sub["chapter_year_i"].astype(int)
 
     # Learn dept_code → agency_name by joining against enacted extraction.
@@ -379,11 +397,25 @@ def join_sfs(comparison_df: pd.DataFrame, sfs: pd.DataFrame) -> pd.DataFrame:
     id_final = pd.concat([matched, unmatched.assign(sfs_balance=pd.NA, sfs_match_method="")],
                           ignore_index=True)
 
-    # NaN-ID items: match on (agency, chapter_year, approp_amount, reapprop_amount)
+    # NaN-ID items: either (a) member items whose allocation rows never had
+    # a 5-digit approp_id in the bill, or (b) large reapprops where the
+    # extractor missed the approp_id due to formatting quirks (e.g. DOH
+    # Essential Plan $2.5B, which SFS knows as approp_id 59054).
+    #
+    # Search the FULL SFS table, not just the noid subset — the SFS record
+    # may have an approp_id even when our bill extraction didn't surface it.
+    # Pass A: tightest (agency, chyr, approp_amount, reapprop_amount)
+    # Pass B: loose (agency, chyr, approp_amount)
     noid_items = drops[drops.approp_id_s == ""].copy()
-    noid = _try_merge(noid_items, noid_sfs,
-                      ["agency_s", "chapter_year_i", "approp_amount_i", "reapprop_amount_i"],
-                      "agency+noid+chyr+amt+re")
+    na = _try_merge(noid_items, sfs,
+                    ["agency_s", "chapter_year_i", "approp_amount_i", "reapprop_amount_i"],
+                    "agency+noid+chyr+amt+re")
+    still_unmatched = na[na.sfs_balance.isna()].drop(columns=["sfs_balance", "sfs_match_method"])
+    noid_matched = na[na.sfs_balance.notna()]
+    nb = _try_merge(still_unmatched, sfs,
+                    ["agency_s", "chapter_year_i", "approp_amount_i"],
+                    "agency+noid+chyr+amt")
+    noid = pd.concat([noid_matched, nb], ignore_index=True)
 
     merged = pd.concat([id_final, noid], ignore_index=True)
     # Drop helper cols

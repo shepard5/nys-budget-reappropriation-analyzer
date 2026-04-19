@@ -179,17 +179,34 @@ def test_no_duplicate_survivors(plan):
 
 
 def test_label_ordering_per_page(plan):
-    """Labels on a single page should be A, B, C, ... (no gaps, alphabetical)."""
+    """Labels on a single page should be A, B, ..., Z, AA, AB, ... (Excel-style,
+    uppercase only, no gaps). Regression for the punctuation/lowercase bug
+    where >26 inserts on a single page produced "[", "\\", "]", "a", "b"...
+    which broke filenames and the LBDC API."""
     from collections import defaultdict
+    def _expected_suffix(k: int) -> str:
+        if k < 26:
+            return chr(ord("A") + k)
+        return chr(ord("A") + (k // 26) - 1) + chr(ord("A") + (k % 26))
+
     by_page = defaultdict(list)
     for i in plan:
         by_page[i["label_pdf_page"]].append(i["label"])
     for page, labels in by_page.items():
-        letters = sorted(lbl[len(str(page)):] for lbl in labels)
-        expected = [chr(ord("A") + k) for k in range(len(letters))]
-        assert letters == expected, (
-            f"page {page} labels not contiguous: got {letters}"
+        # Sort by length first (A..Z before AA..ZZ), then alphabetical.
+        suffixes = sorted(
+            (lbl[len(str(page)):] for lbl in labels),
+            key=lambda s: (len(s), s),
         )
+        expected = [_expected_suffix(k) for k in range(len(suffixes))]
+        assert suffixes == expected, (
+            f"page {page} labels not contiguous: got {suffixes[:30]}"
+        )
+        # All suffixes must be uppercase ASCII letters only
+        for s in suffixes:
+            assert all('A' <= c <= 'Z' for c in s), (
+                f"page {page}: invalid label suffix {s!r}"
+            )
 
 
 def test_approp_sourced_not_flagged_for_chyr_header(plan):
@@ -354,6 +371,39 @@ def test_multi_page_survivor_keeps_intermediate_pages(plan):
                     )
                 return  # First multi-page case tested is enough
     pytest.skip("no multi-page survivors in plan")
+
+
+def test_chyr_persists_across_fund_top():
+    """When the bill uses CHYR -> FUND -> reapprops order, the FUND_TOP
+    handler must NOT reset chapter_year. Regression: Agriculture pg92 had
+    chyr 2008 amd 2011 preceding fund 'General Fund / Community Projects
+    Fund - 007 / Account AA'; the extractor was zeroing chyr during the
+    sub-fund collector, leaving member items (Afton Driving Park etc.)
+    with chyr=0 and unable to join SFS."""
+    import pandas as pd
+    rr = pd.read_csv(OUTPUTS / "enacted_reapprops.csv")
+    # No reapprops should end up with chyr=0 in a clean extraction.
+    zero_chyr = rr[rr["chapter_year"] == 0]
+    assert len(zero_chyr) == 0, (
+        f"{len(zero_chyr)} reapprops have chyr=0 — FUND_TOP is still "
+        f"zeroing chapter_year"
+    )
+
+
+def test_member_items_appear_in_sfs_lookup():
+    """SFS loader must retain member-item rows (approp_id_s=='') so that
+    NaN-id bill drops like 'Afton Driving Park' can match by
+    (agency, chyr, approp_amount). Previously filtered out, leaving 1,696
+    NaN-id drops permanently unmatchable."""
+    import sys, pandas as pd
+    sys.path.insert(0, str(ROOT / "src"))
+    from sfs import load_sfs_lookup
+    sfs = load_sfs_lookup()
+    noid_rows = (sfs["approp_id_s"] == "").sum()
+    assert noid_rows > 30_000, (
+        f"SFS lookup only has {noid_rows} member-item rows — loader is "
+        f"filtering them out, breaking NaN-id matching"
+    )
 
 
 def test_subschedule_not_attributed_to_next_reapprop():

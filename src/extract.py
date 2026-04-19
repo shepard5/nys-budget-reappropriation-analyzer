@@ -315,8 +315,12 @@ def extract(html: str) -> ExtractResult:
                     fund_parts.append(tj_norm)
                     last_part_indent = tj_indent
                 j += 1
-            chapter_year = 0
-            amending_year = 0
+            # Don't reset chapter_year here — in the Agriculture member-item
+            # section and others, the bill puts CHYR → FUND → reapprops, so
+            # the just-set chyr is still the governing one. If a new CHYR
+            # appears later it will update. (When the section is structured
+            # FUND → CHYR_A → CHYR_B, chapter_year was already 0 from the
+            # section/agency/program reset, so nothing to preserve.)
             buf_start_idx = None
             i = j
             continue

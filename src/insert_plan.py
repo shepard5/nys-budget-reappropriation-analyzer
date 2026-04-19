@@ -707,7 +707,16 @@ def main():
             inserts[i]["survivors"][0]["first_line"],
         ))
         for letter_i, ins_i in enumerate(idxs):
-            letter = chr(ord("A") + letter_i)
+            # A, B, ..., Z, AA, AB, ..., AZ, BA, ... — Excel-style.
+            # Uppercase only; past Z the naive chr(ord('A')+i) emits
+            # "[", "\\", "]", then lowercase "a"..  which break both
+            # filenames and user readability.
+            if letter_i < 26:
+                letter = chr(ord("A") + letter_i)
+            else:
+                first = chr(ord("A") + (letter_i // 26) - 1)
+                second = chr(ord("A") + (letter_i % 26))
+                letter = first + second
             inserts[ins_i]["label"] = f"{page}{letter}"
 
     # Invariants (cheap runtime assertions to catch regressions)

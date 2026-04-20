@@ -30,24 +30,39 @@ def line_num_of(text: str):
 # ──────────────────────────────────────────────────────────────────────────
 # Program header
 # ──────────────────────────────────────────────────────────────────────────
-# Reapprops section: program name stands alone on one line, all caps ending
-# in "PROGRAM".
-PROGRAM_RE = re.compile(r"^[A-Z][A-Z0-9 ,&'\-/]*\s+PROGRAM$")
+# Reapprops section: program name stands alone on one line, all caps.
+# ATL/State Ops bills end with the word "PROGRAM".
+# Capital Projects bills end with a parenthesized code like "(CCP)" or
+# "(CCP LTC)". Some Capital program headers use neither word but still
+# stand alone in all-caps — e.g. "NEW FACILITIES PURPOSE (CCP)".
+# We accept either form.
+PROGRAM_RE = re.compile(
+    r"^[A-Z][A-Z0-9 ,&'\-/]*"
+    r"(?:\s+PROGRAM|\s*\([A-Z]+(?:\s+[A-Z]+)?\))"
+    r"\s*$"
+)
 
 # Appropriations section: program name is followed by a total amount on the
-# same line, e.g. "ADULT CAREER ... PROGRAM ..... 229,925,000".
+# same line, e.g. "ADULT CAREER ... PROGRAM ..... 229,925,000"
+# or Capital "NEW FACILITIES PURPOSE (CCP) .............. 33,200,000".
 PROGRAM_WITH_AMOUNT_RE = re.compile(
-    r"^([A-Z][A-Z0-9 ,&'\-/]*\s+PROGRAM)\s*\.{2,}\s*\$?[\d,]+\s*$"
+    r"^([A-Z][A-Z0-9 ,&'\-/]*"
+    r"(?:\s+PROGRAM|\s*\([A-Z]+(?:\s+[A-Z]+)?\))"
+    r")\s*\.{2,}\s*\$?[\d,]+\s*$"
 )
 # Appropriations section: program with NO trailing amount (rare — probably
 # never happens, kept for safety).
 PROGRAM_PLAIN_RE = re.compile(
-    r"^([A-Z][A-Z0-9 ,&'\-/]*\s+PROGRAM)\s*$"
+    r"^([A-Z][A-Z0-9 ,&'\-/]*"
+    r"(?:\s+PROGRAM|\s*\([A-Z]+(?:\s+[A-Z]+)?\))"
+    r")\s*$"
 )
 # Appropriations section: program name spans two lines and continues with
 # "PROGRAM ........ <amount>" on the second line. Pair with PROGRAM_CAPS_LINE_RE
 # to detect the preceding line.
-PROGRAM_CONT_RE = re.compile(r"^PROGRAM\s*\.{2,}\s*\$?[\d,]+\s*$")
+PROGRAM_CONT_RE = re.compile(
+    r"^(?:PROGRAM|\([A-Z]+(?:\s+[A-Z]+)?\))\s*\.{2,}\s*\$?[\d,]+\s*$"
+)
 PROGRAM_CAPS_LINE_RE = re.compile(r"^[A-Z][A-Z0-9 ,&'\-/]*[A-Z]\s*$")
 
 
@@ -55,8 +70,14 @@ PROGRAM_CAPS_LINE_RE = re.compile(r"^[A-Z][A-Z0-9 ,&'\-/]*[A-Z]\s*$")
 # Fund top-level families (the first line of a fund-header block)
 # ──────────────────────────────────────────────────────────────────────────
 FUND_TOP_RE = re.compile(
-    r"^(General Fund|Special Revenue Funds - Federal|Special Revenue Funds - Other|"
-    r"Capital Projects Funds|Enterprise Funds|Fiduciary Funds)$"
+    r"^(General Fund|"
+    r"Special Revenue Funds - Federal|Special Revenue Funds - Other|"
+    # Capital Projects: two variants in use
+    #   "Capital Projects Funds - Other"  (family, plural)
+    #   "Capital Projects Fund - Other"   (family, singular, rarer)
+    #   "Capital Projects Funds"           (bare family, ATL usage)
+    r"Capital Projects Funds?(?: - (?:Federal|Other))?|"
+    r"Enterprise Funds|Fiduciary Funds)$"
 )
 
 
@@ -208,12 +229,15 @@ def looks_like_agency_header(text: str) -> bool:
 # Bill title on every page reveals the section:
 #   "AID TO LOCALITIES   YYYY-YY"                 → appropriation
 #   "AID TO LOCALITIES - REAPPROPRIATIONS   YYYY-YY" → reapprop
-_SECTION_TITLE_RE = re.compile(r"^AID TO LOCALITIES", re.IGNORECASE)
+# Matches the bill-title page header for all three appropriations bills.
+_SECTION_TITLE_RE = re.compile(
+    r"^(AID TO LOCALITIES|STATE OPERATIONS|CAPITAL PROJECTS)", re.IGNORECASE
+)
 
 
 def section_of_title(text: str):
     """Return 'reapprop' or 'appropriation' if the text is a bill-title page
-    header, else None."""
+    header, else None. Works for ATL / State Ops / Capital Projects."""
     t = text.strip()
     if not _SECTION_TITLE_RE.match(t):
         return None

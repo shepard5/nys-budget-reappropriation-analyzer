@@ -22,7 +22,7 @@ from typing import List, Dict, Optional
 from lbdc import LBDCClient, LBDCDocument
 
 
-from config import ROOT
+ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "cache"
 OUTPUTS = ROOT / "outputs"
 

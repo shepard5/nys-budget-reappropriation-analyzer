@@ -17,7 +17,7 @@ from pathlib import Path
 from lbdc import LBDCClient
 
 
-from config import ROOT
+ROOT = Path(__file__).resolve().parent.parent
 INPUTS = ROOT / "inputs"
 CACHE = ROOT / "cache"
 

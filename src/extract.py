@@ -517,7 +517,7 @@ def extract(html: str) -> ExtractResult:
 def main():
     import sys
     import json
-    from config import ROOT as root
+    root = Path(__file__).resolve().parent.parent
     cache = root / "cache"
     outputs = root / "outputs"
     outputs.mkdir(exist_ok=True)

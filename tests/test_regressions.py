@@ -93,14 +93,10 @@ def test_every_insert_has_pdf(plan):
 
 
 def test_sfs_mapping_resolves_many_agencies(drops):
-    """SFS dept_code → agency mapping should match at least half of drops.
-    Ratio-based so it works across section workspaces (ATL/Capital/SO)."""
-    if len(drops) == 0:
-        pytest.skip("no drops")
+    """SFS dept_code → agency mapping should resolve enough agencies to be useful."""
     matched = drops[drops["sfs_balance"].notna()]
-    ratio = len(matched) / len(drops)
-    assert ratio >= 0.5, (
-        f"only {len(matched)}/{len(drops)} ({ratio:.1%}) drops matched SFS"
+    assert len(matched) > 1000, (
+        f"only {len(matched)} drops matched SFS — mapping likely regressed"
     )
 
 
@@ -132,16 +128,16 @@ def test_926A_preserves_chyr_header(plan):
     assert found_kept, "926A chyr header line not located"
 
 
-def test_chyr_transitions_split_inserts(plan):
+def test_36_series_splits_on_chyr(plan):
     """Issue 2 fix: chapter-year transitions should split inserts.
-    Section-agnostic version: every insert's survivors should share ONE
-    (program, fund, chyr, amending_year) tuple. In ATL the densest case
-    was pg 36 (Office for the Aging) with 6+ chyr groups.
-    Skip if no insert has multiple survivors to test."""
-    any_multi = any(len(i["survivors"]) > 1 for i in plan)
-    if not any_multi:
-        pytest.skip("plan has no multi-survivor inserts")
-    for ins in plan:
+    Page 36 had one label 36A bundling multiple chyrs; now each chyr gets its own."""
+    page_36_inserts = [i for i in plan if i["label_pdf_page"] == 36]
+    # Should be > 3 (used to be 3; after split expect ~10)
+    assert len(page_36_inserts) >= 6, (
+        f"page 36 only has {len(page_36_inserts)} inserts — chyr split regressed"
+    )
+    # Each insert's survivors share ONE (program, fund, chapter_year) tuple
+    for ins in page_36_inserts:
         chyrs = {(s["program"], s["fund"], s["chapter_year"], s["amending_year"])
                  for s in ins["survivors"]}
         assert len(chyrs) == 1, (
@@ -377,6 +373,26 @@ def test_multi_page_survivor_keeps_intermediate_pages(plan):
     pytest.skip("no multi-page survivors in plan")
 
 
+def test_multi_line_agency_header_doesnt_drop_reapprops():
+    """Agencies with two-line page headers (DEPARTMENT OF FAMILY ASSISTANCE
+    + OFFICE OF CHILDREN AND FAMILY SERVICES; DEPARTMENT OF FAMILY ASSISTANCE
+    + OFFICE OF TEMPORARY AND DISABILITY ASSISTANCE; etc.) must extract their
+    reapprops. Previous bug: extractor reset state every page because the
+    Department line didn't equal the Office line that was set before, dropping
+    hundreds of pages of content silently."""
+    import pandas as pd
+    rr = pd.read_csv(OUTPUTS / "enacted_reapprops.csv")
+    for agency, min_count in [
+        ("OFFICE OF CHILDREN AND FAMILY SERVICES", 100),
+        ("OFFICE OF TEMPORARY AND DISABILITY ASSISTANCE", 50),
+    ]:
+        n = (rr["agency"] == agency).sum()
+        assert n >= min_count, (
+            f"{agency} has only {n} extracted reapprops — "
+            f"multi-line agency-header regression"
+        )
+
+
 def test_chyr_persists_across_fund_top():
     """When the bill uses CHYR -> FUND -> reapprops order, the FUND_TOP
     handler must NOT reset chapter_year. Regression: Agriculture pg92 had
@@ -386,13 +402,11 @@ def test_chyr_persists_across_fund_top():
     with chyr=0 and unable to join SFS."""
     import pandas as pd
     rr = pd.read_csv(OUTPUTS / "enacted_reapprops.csv")
-    # Reapprops with chyr=0 are rare edge cases (malformed headers).
-    # Allow up to 0.1% — historically ATL had 0, Capital has 1/2824.
+    # No reapprops should end up with chyr=0 in a clean extraction.
     zero_chyr = rr[rr["chapter_year"] == 0]
-    ratio = len(zero_chyr) / max(len(rr), 1)
-    assert ratio < 0.001, (
-        f"{len(zero_chyr)}/{len(rr)} reapprops have chyr=0 — FUND_TOP "
-        f"zeroing regression likely"
+    assert len(zero_chyr) == 0, (
+        f"{len(zero_chyr)} reapprops have chyr=0 — FUND_TOP is still "
+        f"zeroing chapter_year"
     )
 
 

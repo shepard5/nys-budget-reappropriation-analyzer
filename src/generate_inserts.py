@@ -219,8 +219,15 @@ def apply_insert_edits(doc: LBDCDocument, insert: dict) -> None:
         for p, ln, text, blank in page_lines:
             if blank:
                 continue
+            # Page-header lines (page number, agency name, bill title) —
+            # strike them too. Matches LBDC's manual-analyst convention: when
+            # the insert is physically pasted into the tracker, the tracker
+            # has its own page header, making the original insert-source
+            # header redundant noise. Visually indicating it as struck tells
+            # the reader "this is carried-over context, not new content".
             if ln is None:
-                continue  # page header — leave alone
+                _strike_p_in_place(p, doc)
+                continue
             if (pg_off, ln) not in keep_lines:
                 _strike_p_in_place(p, doc)
 

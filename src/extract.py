@@ -205,6 +205,17 @@ def extract(html: str) -> ExtractResult:
     # Buffer for the current reapprop being accumulated
     buf_start_idx: Optional[int] = None
 
+    # Page-header agency accumulation. Many agencies span TWO header lines —
+    # e.g. "DEPARTMENT OF FAMILY ASSISTANCE" followed by "OFFICE OF CHILDREN
+    # AND FAMILY SERVICES". Processing each line independently with
+    # `if new_agency != agency: reset state` flip-flops the agency every page
+    # break and nukes program/fund/chyr state, causing hundreds of pages of
+    # reapprops to silently drop. Instead we collect agency-header candidates
+    # within the current page's header block and commit the LAST one (the
+    # most specific sub-agency) when the first body line of the page arrives.
+    pending_agency: str = agency
+    current_page_for_hdr: int = -1
+
     # Index walk
     i = 0
     while i < len(lines):
@@ -214,6 +225,12 @@ def extract(html: str) -> ExtractResult:
         if L.is_blank:
             i += 1
             continue
+
+        # Reset per-page header accumulation when the page index changes.
+        if L.page_idx != current_page_for_hdr:
+            current_page_for_hdr = L.page_idx
+            # Keep pending_agency carrying the last known agency; individual
+            # agency-header lines on the new page will overwrite as seen.
 
         # Unnumbered lines are page-header content (page number, agency name,
         # bill title). Check if it's an agency name or a section-title line
@@ -234,21 +251,25 @@ def extract(html: str) -> ExtractResult:
                     in_subschedule = False
                     buf_start_idx = None
             elif t_hdr and looks_like_agency_header(t_hdr):
-                new_agency = re.sub(r"\s+", " ", t_hdr)
-                if new_agency != agency:
-                    agency = new_agency
-                    # New agency — reset program/fund/chyr/section state.
-                    program = ""
-                    fund_parts = []
-                    chapter_year = 0
-                    amending_year = 0
-                    chyr_page_idx = -1
-                    fund_page_idx = -1
-                    in_subschedule = False
-                    buf_start_idx = None
-                    section = None
+                # Accumulate — the LAST agency-header line on the page wins
+                # when we commit at the first body line below.
+                pending_agency = re.sub(r"\s+", " ", t_hdr)
             i += 1
             continue
+
+        # First body line on this page — commit the pending agency. Only
+        # reset downstream state when the committed agency actually changes.
+        if pending_agency != agency:
+            agency = pending_agency
+            program = ""
+            fund_parts = []
+            chapter_year = 0
+            amending_year = 0
+            chyr_page_idx = -1
+            fund_page_idx = -1
+            in_subschedule = False
+            buf_start_idx = None
+            section = None
 
         # If we're not in the reapprop section, DON'T emit reapprops. We still
         # let structural detection updates run so that state is cleanly set

@@ -60,8 +60,15 @@ def classify_p(p) -> Tuple[str, str]:
     if p.get("class") and "new-line" in p.get("class"):
         return "insert", htmllib.escape(text)
 
+    # Page-header lines (page number / agency / bill title) stay classified
+    # as page_header regardless of strike status — the generator strikes them
+    # to match LBDC manual format, but they aren't body content and shouldn't
+    # contribute to body-keep / struck-between-kept detectors.
+    if is_page_header:
+        return "page_header", htmllib.escape(text)
+
     if not dels and not inss:
-        return ("page_header" if is_page_header else "keep"), htmllib.escape(text)
+        return "keep", htmllib.escape(text)
 
     # Fully struck (all text wrapped by del, no ins)
     if dels and not inss:

@@ -9,11 +9,25 @@ You need Python 3.9 or newer. If you don't have it:
 
 ## Run the app
 
-Double-click:
-- **Windows:** `run.bat`
-- **macOS:** `run.command`
+### First launch (one-time unblock)
 
-First launch installs dependencies (about a minute). The app opens in your browser at `http://localhost:8501`.
+Because the launcher script isn't signed with an Apple Developer / Microsoft certificate, the OS will warn you on the first run. This is expected.
+
+**macOS:**
+1. **Right-click** (or Control-click) on `run.command`, then pick **Open**.
+2. macOS says *"Cannot verify developer..."* — click **Open** in the dialog.
+3. Future double-clicks work normally.
+
+**Windows:**
+1. Double-click `run.bat`.
+2. If Windows SmartScreen blocks it: click **More info** → **Run anyway**.
+3. Future double-clicks work normally.
+
+### Regular use
+
+Just double-click `run.command` (macOS) or `run.bat` (Windows).
+
+First launch installs dependencies (about a minute). The app then opens in your browser at `http://localhost:8501`.
 
 ## Use the app
 

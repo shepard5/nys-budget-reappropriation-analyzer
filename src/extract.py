@@ -359,24 +359,39 @@ def extract(html: str) -> ExtractResult:
             # "hereby amended and reappropriated to read:") and consume it too.
             consumed_to = i
             if not t.rstrip().endswith(":"):
+                # Chyr header spans additional line(s) until a line ending
+                # with ":". Some OCFS/OTDA chyrs span 3 lines, e.g.:
+                #   "The appropriation made by chapter 53, section 1, of the
+                #    laws of 2024, as"
+                #   "supplemented by interchanges in accordance with state
+                #    finance law,"
+                #   "is hereby amended and reappropriated to read:"
+                # Consume up to 3 continuation lines, stopping on ":".
                 j = i + 1
-                while j < len(lines):
+                consumed = 0
+                while j < len(lines) and consumed < 3:
                     Lj = lines[j]
                     if Lj.is_blank or Lj.line_num is None:
                         j += 1
                         continue
                     tj = Lj.text.strip()
-                    is_continuation = (
-                        tj.endswith(":") or
-                        bool(CHAPTER_YEAR_CONT_RE.match(tj))
-                    )
-                    if is_continuation:
-                        if amending_year == 0:
-                            am = re.search(r"of\s+the\s+laws\s+of\s+(\d{4})", tj)
-                            if am:
-                                amending_year = int(am.group(1))
-                        consumed_to = j
-                    break
+                    # Safeguard: don't consume lines that clearly start a
+                    # reapprop body ("For ...", "Notwithstanding ...",
+                    # "Provided ...") or a new structural element.
+                    if (BODY_LINE_START_RE.match(tj)
+                            or PROGRAM_RE.match(tj)
+                            or FUND_TOP_RE.match(tj)
+                            or CHAPTER_YEAR_RE.match(tj)):
+                        break
+                    if amending_year == 0:
+                        am = re.search(r"of\s+the\s+laws\s+of\s+(\d{4})", tj)
+                        if am:
+                            amending_year = int(am.group(1))
+                    consumed_to = j
+                    consumed += 1
+                    if tj.endswith(":"):
+                        break  # end of header
+                    j += 1
             i = consumed_to + 1
             continue
 

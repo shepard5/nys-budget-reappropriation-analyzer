@@ -373,6 +373,62 @@ def test_multi_page_survivor_keeps_intermediate_pages(plan):
     pytest.skip("no multi-page survivors in plan")
 
 
+def test_insert_strikes_page_header_lines(plan):
+    """Manual-analyst convention: the generated insert PDF strikes its own
+    page-header block (page number, agency name, bill title). These are
+    redundant when the insert is pasted into the tracker. Sample 5 inserts;
+    each must have <del> on all ln=None header lines."""
+    from patterns import line_num_of
+    checked = 0
+    for ins in plan:
+        html_path = INSERTS_DIR / f"Insert_{ins['label']}.html"
+        if not html_path.exists():
+            continue
+        soup = BeautifulSoup(html_path.read_text(), "lxml")
+        for p in soup.find_all("p"):
+            t = p.get_text()
+            if not t.strip():
+                continue
+            if line_num_of(t) is not None:
+                break  # reached body
+            # This is a page-header line (page#, agency, bill title)
+            dels = p.find_all("del")
+            inss = p.find_all("ins")
+            # Skip if it's an inserted label line (class=new-line)
+            if p.get("class") and "new-line" in p.get("class"):
+                continue
+            assert dels and not inss, (
+                f"{ins['label']}: page-header line {t.strip()!r} not struck"
+            )
+        checked += 1
+        if checked >= 5:
+            break
+    if checked == 0:
+        pytest.skip("no insert HTMLs available")
+
+
+def test_three_line_chyr_header_consumed():
+    """Chyr headers that span 3 lines — e.g. 'The appropriation made by
+    chapter 53, section 1, of the laws of 2024, as / supplemented by
+    interchanges in accordance with state finance law, / is hereby amended
+    and reappropriated to read:' — must consume all 3 lines. Otherwise the
+    next reapprop's first_line points at a continuation line of the header
+    and the insert PDF strikes the start of the header while keeping the
+    middle, which is nonsensical."""
+    import pandas as pd
+    rr = pd.read_csv(OUTPUTS / "enacted_reapprops.csv")
+    # Spot-check: OCFS chyr 2024 first reapprop after the 3-line header.
+    # approp_id 13959 on enacted page 606 should start no earlier than
+    # line 24 (header consumes 21-23).
+    m = rr[(rr.approp_id == 13959.0) & (rr.first_page == 606)]
+    if len(m) == 0:
+        pytest.skip("13959 not in extraction")
+    first_line = int(m.iloc[0].first_line)
+    assert first_line >= 24, (
+        f"13959 at pg606 first_line={first_line} — 3-line chyr header not consumed"
+    )
+
+
 def test_multi_line_agency_header_doesnt_drop_reapprops():
     """Agencies with two-line page headers (DEPARTMENT OF FAMILY ASSISTANCE
     + OFFICE OF CHILDREN AND FAMILY SERVICES; DEPARTMENT OF FAMILY ASSISTANCE

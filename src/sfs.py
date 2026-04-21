@@ -24,7 +24,7 @@ from typing import Dict, Optional
 import pandas as pd
 
 
-ROOT = Path(__file__).resolve().parent.parent
+from config import ROOT
 
 
 def round_up_to_1k(x: float) -> int:

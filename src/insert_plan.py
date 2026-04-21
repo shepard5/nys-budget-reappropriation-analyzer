@@ -35,7 +35,7 @@ from typing import List, Dict, Optional
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parent.parent
+from config import ROOT
 
 
 # PDF page offsets are derived from the filenames of the input PDFs, which

@@ -49,7 +49,7 @@ from patterns import (
 )
 
 
-ROOT = Path(__file__).resolve().parent.parent
+from config import ROOT
 APPROPS_CHAPTER_YEAR = 2025
 
 

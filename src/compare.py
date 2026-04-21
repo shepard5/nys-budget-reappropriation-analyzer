@@ -30,7 +30,7 @@ from typing import List, Dict, Tuple, Optional
 import pandas as pd
 
 
-ROOT = Path(__file__).resolve().parent.parent
+from config import ROOT
 
 
 def _agency(row) -> str:

@@ -36,7 +36,7 @@ from patterns import (
 )
 
 
-ROOT = Path(__file__).resolve().parent.parent
+from config import ROOT
 CACHE = ROOT / "cache"
 OUTPUTS = ROOT / "outputs"
 INSERTS_DIR = OUTPUTS / "inserts"
